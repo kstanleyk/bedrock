@@ -28,3 +28,5 @@ public sealed record LinkExternalIdentityRequest(string Provider, string Provide
 public sealed record CreateInvitationRequest(string TargetEmail, string? RoleHint = null);
 public sealed record AcceptInvitationRequest(string TokenHash, string Password);
 public sealed record CreateApiKeyRequest(string? Name = null);
+public sealed record AdminResetPasswordRequest(string NewPassword);
+public sealed record AdminChangeEmailRequest(string NewEmail);

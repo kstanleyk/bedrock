@@ -197,6 +197,24 @@ public sealed class BedrockAdminController : ControllerBase
         return Ok(BedrockResponse.Ok());
     }
 
+    [HttpPost("users/{userId:guid}/reset-password")]
+    public async Task<ActionResult<BedrockResponse>> ResetPassword(
+        Guid userId, [FromBody] AdminResetPasswordRequest request, CancellationToken ct)
+    {
+        var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        await _admin.ResetPasswordAsync(adminId, userId, request.NewPassword, ct);
+        return Ok(BedrockResponse.Ok());
+    }
+
+    [HttpPost("users/{userId:guid}/change-email")]
+    public async Task<ActionResult<BedrockResponse>> ChangeEmail(
+        Guid userId, [FromBody] AdminChangeEmailRequest request, CancellationToken ct)
+    {
+        var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        await _admin.AdminChangeEmailAsync(adminId, userId, request.NewEmail, ct);
+        return Ok(BedrockResponse.Ok());
+    }
+
     [HttpPost("invitations")]
     public async Task<ActionResult<BedrockResponse>> CreateInvitation(
         [FromBody] CreateInvitationRequest request,
