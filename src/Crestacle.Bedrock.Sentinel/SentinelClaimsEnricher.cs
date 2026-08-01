@@ -42,14 +42,15 @@ internal sealed class SentinelClaimsEnricher(
         Guid userId,
         CancellationToken ct = default)
     {
-        var permTask = permissions.GetPermissionsForUserAsync(userId.ToString(), ct);
-        var userTask = users.GetByIdAsync(userId, ct);
-        var credTask = credentials.GetByUserIdAsync(userId, ct);
-        await Task.WhenAll(permTask, userTask, credTask);
+        // Sequential awaits: all three repositories share the same scoped DbContext instance,
+        // so concurrent Task.WhenAll would trigger EF Core's "second operation" concurrency error.
+        var perms = await permissions.GetPermissionsForUserAsync(userId.ToString(), ct);
+        var user  = await users.GetByIdAsync(userId, ct);
+        var cred  = await credentials.GetByUserIdAsync(userId, ct);
 
-        var claims = permTask.Result.ToDictionary(p => p, _ => "true");
-        claims["name"]        = userTask.Result?.FullName ?? string.Empty;
-        claims["mfa_enabled"] = credTask.Result?.MfaEnabled == true ? "true" : "false";
+        var claims = perms.ToDictionary(p => p, _ => "true");
+        claims["name"]        = user?.FullName ?? string.Empty;
+        claims["mfa_enabled"] = cred?.MfaEnabled == true ? "true" : "false";
         return claims;
     }
 
