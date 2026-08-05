@@ -8,7 +8,7 @@ public sealed record ResendConfirmationRequest(string Email);
 public sealed record LoginRequest(string Email, string Password, string? FingerprintHash = null);
 public sealed record VerifyMfaRequest(string ChallengeToken, string Code, string? FingerprintHash = null);
 public sealed record RefreshRequest(string? RefreshToken = null, string? FingerprintHash = null);
-public sealed record RevokeRequest(string RefreshToken);
+public sealed record RevokeRequest(string? RefreshToken = null);
 public sealed record ForgotPasswordRequest(string Email);
 public sealed record ResetPasswordRequest(string Token, string NewPassword);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
