@@ -5,9 +5,11 @@ using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Exceptions;
 using Crestacle.Bedrock.Core.Interfaces.Repositories;
 using Crestacle.Bedrock.Core.Interfaces.Services;
+using Crestacle.Bedrock.Core.Options;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Crestacle.Bedrock.AspNetCore.Controllers;
 
@@ -21,6 +23,7 @@ public sealed class BedrockAuthController : ControllerBase
     private readonly IExternalLoginService _externalLogin;
     private readonly IInvitationService _invitations;
     private readonly ITokenService _tokenService;
+    private readonly BedrockOptions _options;
 
     public BedrockAuthController(
         ICredentialService credentials,
@@ -28,7 +31,8 @@ public sealed class BedrockAuthController : ControllerBase
         ICredentialRepository credentialRepo,
         IExternalLoginService externalLogin,
         IInvitationService invitations,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        IOptions<BedrockOptions> options)
     {
         _credentials = credentials;
         _refreshTokens = refreshTokens;
@@ -36,6 +40,7 @@ public sealed class BedrockAuthController : ControllerBase
         _externalLogin = externalLogin;
         _invitations = invitations;
         _tokenService = tokenService;
+        _options = options.Value;
     }
 
     [HttpPost("register")]
@@ -396,10 +401,18 @@ public sealed class BedrockAuthController : ControllerBase
         {
             HttpOnly = true,
             Secure   = true,
-            SameSite = SameSiteMode.Strict,
+            SameSite = ToAspNetSameSite(_options.Session.RefreshCookieSameSite),
             Expires  = DateTimeOffset.UtcNow.AddDays(7),
             Path     = "/api/v1/auth",
         });
+
+    private static SameSiteMode ToAspNetSameSite(RefreshCookieSameSitePolicy policy) => policy switch
+    {
+        RefreshCookieSameSitePolicy.Strict => SameSiteMode.Strict,
+        RefreshCookieSameSitePolicy.Lax    => SameSiteMode.Lax,
+        RefreshCookieSameSitePolicy.None   => SameSiteMode.None,
+        _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, null),
+    };
 
     private void DeleteRefreshCookie() =>
         Response.Cookies.Delete("omni_refresh", new CookieOptions { Path = "/api/v1/auth" });
