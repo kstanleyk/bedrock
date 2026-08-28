@@ -728,6 +728,21 @@ Forces the user to change their password on next login.
 DELETE admin/users/{userId}/sessions
 ```
 
+### Change email
+
+```
+POST admin/users/{userId}/change-email
+```
+
+**Request**
+```json
+{ "newEmail": "real.person@example.com" }
+```
+
+Directly sets a new email address, bypassing the self-service confirmation-link flow — for
+deployments with no working email delivery. Revokes all active sessions. No-op if
+`newEmail` matches the account's current address.
+
 ### Anonymise account
 
 ```

@@ -5,8 +5,11 @@ using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Exceptions;
 using Crestacle.Bedrock.Core.Interfaces.Repositories;
 using Crestacle.Bedrock.Core.Interfaces.Services;
+using Crestacle.Bedrock.Core.Options;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Crestacle.Bedrock.AspNetCore.Controllers;
 
@@ -20,6 +23,7 @@ public sealed class BedrockAuthController : ControllerBase
     private readonly IExternalLoginService _externalLogin;
     private readonly IInvitationService _invitations;
     private readonly ITokenService _tokenService;
+    private readonly BedrockOptions _options;
 
     public BedrockAuthController(
         ICredentialService credentials,
@@ -27,7 +31,8 @@ public sealed class BedrockAuthController : ControllerBase
         ICredentialRepository credentialRepo,
         IExternalLoginService externalLogin,
         IInvitationService invitations,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        IOptions<BedrockOptions> options)
     {
         _credentials = credentials;
         _refreshTokens = refreshTokens;
@@ -35,6 +40,7 @@ public sealed class BedrockAuthController : ControllerBase
         _externalLogin = externalLogin;
         _invitations = invitations;
         _tokenService = tokenService;
+        _options = options.Value;
     }
 
     [HttpPost("register")]
@@ -124,9 +130,11 @@ public sealed class BedrockAuthController : ControllerBase
         var tokens = await _refreshTokens.IssueAsync(
             result.UserId, request.Email, [], ip, userAgent, fingerprint, ct: ct);
 
+        SetRefreshCookie(tokens.RefreshToken);
+
         return Ok(BedrockResponse<LoginResponse>.Ok(new LoginResponse(
             AccessToken: tokens.AccessToken,
-            RefreshToken: tokens.RefreshToken,
+            RefreshToken: null,
             AccessTokenExpiresAt: tokens.AccessTokenExpiresAt,
             RequiresMfa: false,
             ChallengeToken: null,
@@ -157,8 +165,10 @@ public sealed class BedrockAuthController : ControllerBase
         var tokens = await _refreshTokens.IssueAsync(
             userId, email, [], ip, userAgent, fingerprint, ct: ct);
 
+        SetRefreshCookie(tokens.RefreshToken);
+
         return Ok(BedrockResponse<TokenResponse>.Ok(
-            new TokenResponse(tokens.AccessToken, tokens.RefreshToken, tokens.AccessTokenExpiresAt)));
+            new TokenResponse(tokens.AccessToken, null, tokens.AccessTokenExpiresAt)));
     }
 
     [HttpPost("refresh")]
@@ -167,16 +177,22 @@ public sealed class BedrockAuthController : ControllerBase
         [FromBody] RefreshRequest request,
         CancellationToken ct)
     {
+        var refreshToken = Request.Cookies["omni_refresh"];
+        if (string.IsNullOrEmpty(refreshToken))
+            return Unauthorized(BedrockResponse<TokenResponse>.Fail("No refresh token."));
+
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userAgent = Request.Headers.UserAgent.ToString();
         if (string.IsNullOrWhiteSpace(userAgent)) userAgent = "unknown";
         var fingerprint = request.FingerprintHash ?? userAgent;
 
         var tokens = await _refreshTokens.RefreshAsync(
-            request.RefreshToken, ip, userAgent, fingerprint, ct);
+            refreshToken, ip, userAgent, fingerprint, ct);
+
+        SetRefreshCookie(tokens.RefreshToken);
 
         return Ok(BedrockResponse<TokenResponse>.Ok(
-            new TokenResponse(tokens.AccessToken, tokens.RefreshToken, tokens.AccessTokenExpiresAt)));
+            new TokenResponse(tokens.AccessToken, null, tokens.AccessTokenExpiresAt)));
     }
 
     [HttpPost("revoke")]
@@ -185,8 +201,25 @@ public sealed class BedrockAuthController : ControllerBase
         [FromBody] RevokeRequest request,
         CancellationToken ct)
     {
+        var refreshToken = Request.Cookies["omni_refresh"] ?? request.RefreshToken;
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        await _refreshTokens.RevokeAsync(request.RefreshToken, ip, ct: ct);
+        if (!string.IsNullOrEmpty(refreshToken))
+            await _refreshTokens.RevokeAsync(refreshToken, ip, ct: ct);
+        DeleteRefreshCookie();
+        return Ok(BedrockResponse.Ok());
+    }
+
+    [HttpPost("logout")]
+    [AllowAnonymous]
+    public async Task<ActionResult<BedrockResponse>> Logout(CancellationToken ct)
+    {
+        var refreshToken = Request.Cookies["omni_refresh"];
+        if (!string.IsNullOrEmpty(refreshToken))
+        {
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            await _refreshTokens.RevokeAsync(refreshToken, ip, ct: ct);
+        }
+        DeleteRefreshCookie();
         return Ok(BedrockResponse.Ok());
     }
 
@@ -227,9 +260,11 @@ public sealed class BedrockAuthController : ControllerBase
         var result = await _externalLogin.ExternalLoginAsync(
             request.Provider, request.ProviderToken, ip, userAgent, ct);
 
+        SetRefreshCookie(result.Tokens!.RefreshToken);
+
         return Ok(BedrockResponse<LoginResponse>.Ok(new LoginResponse(
-            AccessToken: result.Tokens!.AccessToken,
-            RefreshToken: result.Tokens.RefreshToken,
+            AccessToken: result.Tokens.AccessToken,
+            RefreshToken: null,
             AccessTokenExpiresAt: result.Tokens.AccessTokenExpiresAt,
             RequiresMfa: false,
             ChallengeToken: null,
@@ -253,9 +288,11 @@ public sealed class BedrockAuthController : ControllerBase
         var tokens = await _invitations.AcceptInvitationAsync(
             request.TokenHash, request.Password, ip, userAgent, ct);
 
+        SetRefreshCookie(tokens.RefreshToken);
+
         return Ok(BedrockResponse<LoginResponse>.Ok(new LoginResponse(
             AccessToken: tokens.AccessToken,
-            RefreshToken: tokens.RefreshToken,
+            RefreshToken: null,
             AccessTokenExpiresAt: tokens.AccessTokenExpiresAt,
             RequiresMfa: false,
             ChallengeToken: null,
@@ -325,9 +362,11 @@ public sealed class BedrockAuthController : ControllerBase
         var tokens = await _refreshTokens.IssueAsync(
             result.UserId, email, [], ip, userAgent, fingerprint, ct: ct);
 
+        SetRefreshCookie(tokens.RefreshToken);
+
         return Ok(BedrockResponse<LoginResponse>.Ok(new LoginResponse(
             AccessToken: tokens.AccessToken,
-            RefreshToken: tokens.RefreshToken,
+            RefreshToken: null,
             AccessTokenExpiresAt: tokens.AccessTokenExpiresAt,
             RequiresMfa: false,
             ChallengeToken: null,
@@ -356,4 +395,25 @@ public sealed class BedrockAuthController : ControllerBase
         var token = _tokenService.GenerateEnrollmentToken(userId);
         return Ok(BedrockResponse<RequestEnrollmentResponse>.Ok(new RequestEnrollmentResponse(token)));
     }
+
+    private void SetRefreshCookie(string token) =>
+        Response.Cookies.Append("omni_refresh", token, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure   = true,
+            SameSite = ToAspNetSameSite(_options.Session.RefreshCookieSameSite),
+            Expires  = DateTimeOffset.UtcNow.AddDays(7),
+            Path     = "/api/v1/auth",
+        });
+
+    private static SameSiteMode ToAspNetSameSite(RefreshCookieSameSitePolicy policy) => policy switch
+    {
+        RefreshCookieSameSitePolicy.Strict => SameSiteMode.Strict,
+        RefreshCookieSameSitePolicy.Lax    => SameSiteMode.Lax,
+        RefreshCookieSameSitePolicy.None   => SameSiteMode.None,
+        _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, null),
+    };
+
+    private void DeleteRefreshCookie() =>
+        Response.Cookies.Delete("omni_refresh", new CookieOptions { Path = "/api/v1/auth" });
 }

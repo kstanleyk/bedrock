@@ -202,6 +202,88 @@ public sealed class AdminControllerTests : IDisposable
     }
 
     // -------------------------------------------------------------------------
+    // POST /admin/users/{userId}/change-email
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ChangeEmail_WithAdminToken_UpdatesEmailAndRevokesSessions()
+    {
+        var email = "admin-changeemail@example.com";
+        await RegisterAndActivateAsync(email);
+        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", await GetAdminTokenAsync(email));
+
+        const string newEmail = "admin-changeemail-new@example.com";
+        var response = await _client.PostAsJsonAsync(
+            $"/api/bedrock/admin/users/{userId}/change-email", new AdminChangeEmailRequest(newEmail));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Changing your own email revokes all sessions (same as ResetPassword), so the token
+        // above is now blocklisted - re-authenticate with the new address to confirm both the
+        // persisted change and that login now works with it.
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", await GetAdminTokenAsync(newEmail));
+
+        var detailResponse = await _client.GetAsync($"/api/bedrock/admin/users/{userId}");
+        var detail = (await ReadBedrockResponseAsync<CredentialDetail>(detailResponse)).Data!;
+        detail.Email.Should().Be(newEmail);
+
+        _client.DefaultRequestHeaders.Authorization = null;
+    }
+
+    [Fact]
+    public async Task ChangeEmail_SameEmail_IsNoOpAnd200()
+    {
+        var email = "admin-changeemail-noop@example.com";
+        await RegisterAndActivateAsync(email);
+        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", await GetAdminTokenAsync(email));
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/bedrock/admin/users/{userId}/change-email", new AdminChangeEmailRequest(email));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        _client.DefaultRequestHeaders.Authorization = null;
+    }
+
+    [Fact]
+    public async Task ChangeEmail_AddressAlreadyInUse_Returns401()
+    {
+        var email = "admin-changeemail-dup1@example.com";
+        var otherEmail = "admin-changeemail-dup2@example.com";
+        await RegisterAndActivateAsync(email);
+        await RegisterAndActivateAsync(otherEmail);
+        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", await GetAdminTokenAsync(email));
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/bedrock/admin/users/{userId}/change-email", new AdminChangeEmailRequest(otherEmail));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        _client.DefaultRequestHeaders.Authorization = null;
+    }
+
+    [Fact]
+    public async Task ChangeEmail_UnknownUserId_Returns404()
+    {
+        var email = "admin-changeemail-notfound@example.com";
+        await RegisterAndActivateAsync(email);
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", await GetAdminTokenAsync(email));
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/bedrock/admin/users/{Guid.NewGuid()}/change-email",
+            new AdminChangeEmailRequest("nobody@example.com"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        _client.DefaultRequestHeaders.Authorization = null;
+    }
+
+    // -------------------------------------------------------------------------
     // Authorization — non-admin tokens are rejected with 403
     // -------------------------------------------------------------------------
 

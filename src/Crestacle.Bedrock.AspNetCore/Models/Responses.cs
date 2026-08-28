@@ -32,7 +32,7 @@ public sealed record LoginResponse(
 
 public sealed record TokenResponse(
     string AccessToken,
-    string RefreshToken,
+    string? RefreshToken,
     DateTime AccessTokenExpiresAt);
 
 public sealed record RequestEnrollmentResponse(string EnrollmentToken);

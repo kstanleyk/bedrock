@@ -7,8 +7,8 @@ public sealed record ConfirmEmailRequest(string Token);
 public sealed record ResendConfirmationRequest(string Email);
 public sealed record LoginRequest(string Email, string Password, string? FingerprintHash = null);
 public sealed record VerifyMfaRequest(string ChallengeToken, string Code, string? FingerprintHash = null);
-public sealed record RefreshRequest(string RefreshToken, string? FingerprintHash = null);
-public sealed record RevokeRequest(string RefreshToken);
+public sealed record RefreshRequest(string? RefreshToken = null, string? FingerprintHash = null);
+public sealed record RevokeRequest(string? RefreshToken = null);
 public sealed record ForgotPasswordRequest(string Email);
 public sealed record ResetPasswordRequest(string Token, string NewPassword);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
@@ -28,3 +28,5 @@ public sealed record LinkExternalIdentityRequest(string Provider, string Provide
 public sealed record CreateInvitationRequest(string TargetEmail, string? RoleHint = null);
 public sealed record AcceptInvitationRequest(string TokenHash, string Password);
 public sealed record CreateApiKeyRequest(string? Name = null);
+public sealed record AdminResetPasswordRequest(string NewPassword);
+public sealed record AdminChangeEmailRequest(string NewEmail);

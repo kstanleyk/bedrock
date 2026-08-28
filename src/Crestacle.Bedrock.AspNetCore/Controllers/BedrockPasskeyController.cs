@@ -5,6 +5,7 @@ using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Crestacle.Bedrock.AspNetCore.Controllers;
@@ -98,9 +99,18 @@ public sealed class BedrockPasskeyController : ControllerBase
         var result = await _passkeys.CompleteAuthenticationAsync(
             request.AssertionResponse, ip, userAgent, ct);
 
+        Response.Cookies.Append("omni_refresh", result.Tokens!.RefreshToken, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure   = true,
+            SameSite = SameSiteMode.Strict,
+            Expires  = DateTimeOffset.UtcNow.AddDays(7),
+            Path     = "/api/v1/auth",
+        });
+
         return Ok(BedrockResponse<LoginResponse>.Ok(new LoginResponse(
-            AccessToken: result.Tokens!.AccessToken,
-            RefreshToken: result.Tokens.RefreshToken,
+            AccessToken: result.Tokens.AccessToken,
+            RefreshToken: null,
             AccessTokenExpiresAt: result.Tokens.AccessTokenExpiresAt,
             RequiresMfa: false,
             ChallengeToken: null,
