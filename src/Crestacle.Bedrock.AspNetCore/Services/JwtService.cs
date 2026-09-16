@@ -3,6 +3,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Helpers;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Core.Options;
@@ -43,8 +44,18 @@ public sealed class JwtService : ITokenService
             new("token_type", "access"),
         };
 
-        foreach (var role in roles)
-            claims.Add(new Claim(ClaimTypes.Role, role));
+        // "roles" (plural, guaranteed JSON array), NOT ClaimTypes.Role -- found while
+        // building 1-BE-09-f (crestacle-core), verified against a real issued token:
+        // ClaimTypes.Role's default OutboundClaimTypeMap serializes to the SHORT claim key
+        // "role" (singular), and JwtPayload collapses same-keyed Claims to a bare JSON
+        // STRING when there is exactly one, an array only with two or more -- neither shape
+        // matches crestacle-web's own already-built AccessTokenClaims contract
+        // (packages/auth/src/jwt.ts: `roles: string[]`, always an array, checked via
+        // `Array.isArray`), which would throw MalformedAccessTokenError on every real login
+        // regardless of role count. JsonClaimValueTypes.JsonArray forces a genuine JSON
+        // array under the literal "roles" key even for a single role.
+        var rolesArray = roles as string[] ?? roles.ToArray();
+        claims.Add(new Claim("roles", JsonSerializer.Serialize(rolesArray), JsonClaimValueTypes.JsonArray));
 
         if (tenantId is not null)
             claims.Add(new Claim("tenant_id", tenantId));

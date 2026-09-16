@@ -72,6 +72,12 @@ public static class BedrockAspNetCoreServiceCollectionExtensions
         services.TryAddSingleton<IBedrockEventPublisher, NullBedrockEventPublisher>();
         services.TryAddSingleton<IBedrockClaimsEnricher, NullBedrockClaimsEnricher>();
         services.TryAddSingleton<IBedrockCache, NullBedrockCache>();
+        // SingleRealmProvider always resolves the same no-realm-concept BedrockRealm regardless
+        // of host -- every consumer that never calls WithRealmProvider<T>() (multi-realm hosting)
+        // sees zero behavior change; the realm-scoped values it exposes are read straight from
+        // this SAME IOptions<BedrockOptions> registration.
+        services.AddHttpContextAccessor();
+        services.TryAddSingleton<IBedrockRealmProvider, SingleRealmProvider>();
 
         // --- Password / credential services ---
         services.AddScoped<IPasswordHasher, Argon2idPasswordHasher>();

@@ -24,6 +24,7 @@ public sealed class BedrockAuthController : ControllerBase
     private readonly IInvitationService _invitations;
     private readonly ITokenService _tokenService;
     private readonly BedrockOptions _options;
+    private readonly IBedrockRealmProvider _realmProvider;
 
     public BedrockAuthController(
         ICredentialService credentials,
@@ -32,7 +33,8 @@ public sealed class BedrockAuthController : ControllerBase
         IExternalLoginService externalLogin,
         IInvitationService invitations,
         ITokenService tokenService,
-        IOptions<BedrockOptions> options)
+        IOptions<BedrockOptions> options,
+        IBedrockRealmProvider realmProvider)
     {
         _credentials = credentials;
         _refreshTokens = refreshTokens;
@@ -41,6 +43,20 @@ public sealed class BedrockAuthController : ControllerBase
         _invitations = invitations;
         _tokenService = tokenService;
         _options = options.Value;
+        _realmProvider = realmProvider;
+    }
+
+    /// <summary>
+    /// The current request's realm-scoped refresh-cookie name/TTL — resolved once per action
+    /// from the <c>Host</c> header via <see cref="IBedrockRealmProvider"/>, falling back to the
+    /// base <see cref="BedrockOptions"/> values (this action's own single-realm behavior,
+    /// unchanged) when unresolved.
+    /// </summary>
+    private (string Name, TimeSpan Expiry) ResolveRefreshCookieSettings()
+    {
+        var realm = _realmProvider.Resolve(HttpContext.Request.Host.Host);
+        return (realm?.RefreshCookieName ?? _options.Session.RefreshCookieName,
+                realm?.RefreshTokenExpiry ?? _options.Jwt.RefreshTokenExpiry);
     }
 
     [HttpPost("register")]
@@ -177,7 +193,7 @@ public sealed class BedrockAuthController : ControllerBase
         [FromBody] RefreshRequest request,
         CancellationToken ct)
     {
-        var refreshToken = Request.Cookies["omni_refresh"];
+        var refreshToken = Request.Cookies[ResolveRefreshCookieSettings().Name];
         if (string.IsNullOrEmpty(refreshToken))
             return Unauthorized(BedrockResponse<TokenResponse>.Fail("No refresh token."));
 
@@ -201,7 +217,7 @@ public sealed class BedrockAuthController : ControllerBase
         [FromBody] RevokeRequest request,
         CancellationToken ct)
     {
-        var refreshToken = Request.Cookies["omni_refresh"] ?? request.RefreshToken;
+        var refreshToken = Request.Cookies[ResolveRefreshCookieSettings().Name] ?? request.RefreshToken;
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         if (!string.IsNullOrEmpty(refreshToken))
             await _refreshTokens.RevokeAsync(refreshToken, ip, ct: ct);
@@ -213,7 +229,7 @@ public sealed class BedrockAuthController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<BedrockResponse>> Logout(CancellationToken ct)
     {
-        var refreshToken = Request.Cookies["omni_refresh"];
+        var refreshToken = Request.Cookies[ResolveRefreshCookieSettings().Name];
         if (!string.IsNullOrEmpty(refreshToken))
         {
             var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -396,24 +412,36 @@ public sealed class BedrockAuthController : ControllerBase
         return Ok(BedrockResponse<RequestEnrollmentResponse>.Ok(new RequestEnrollmentResponse(token)));
     }
 
-    private void SetRefreshCookie(string token) =>
-        Response.Cookies.Append("omni_refresh", token, new CookieOptions
+    /// <summary>
+    /// Corrected alongside this action becoming realm-aware: <c>Expires</c> previously
+    /// hardcoded <c>AddDays(7)</c> regardless of the actual configured
+    /// <c>Jwt.RefreshTokenExpiry</c> (7 days by coincidence matched the library's own
+    /// default, masking the bug for every consumer using that default) — a realm with a
+    /// shorter real TTL (e.g. 12 hours) would have shipped a cookie CLAIMING 7 days while
+    /// the server-side token silently expired hours earlier. Now sourced from the same
+    /// realm-resolved value the token's own real expiry uses, so the two can never diverge.
+    /// </summary>
+    private void SetRefreshCookie(string token)
+    {
+        var (name, expiry) = ResolveRefreshCookieSettings();
+        Response.Cookies.Append(name, token, new CookieOptions
         {
             HttpOnly = true,
-            Secure   = true,
+            Secure = true,
             SameSite = ToAspNetSameSite(_options.Session.RefreshCookieSameSite),
-            Expires  = DateTimeOffset.UtcNow.AddDays(7),
-            Path     = "/api/v1/auth",
+            Expires = DateTimeOffset.UtcNow.Add(expiry),
+            Path = _options.Session.RefreshCookiePath,
         });
+    }
 
     private static SameSiteMode ToAspNetSameSite(RefreshCookieSameSitePolicy policy) => policy switch
     {
         RefreshCookieSameSitePolicy.Strict => SameSiteMode.Strict,
-        RefreshCookieSameSitePolicy.Lax    => SameSiteMode.Lax,
-        RefreshCookieSameSitePolicy.None   => SameSiteMode.None,
+        RefreshCookieSameSitePolicy.Lax => SameSiteMode.Lax,
+        RefreshCookieSameSitePolicy.None => SameSiteMode.None,
         _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, null),
     };
 
     private void DeleteRefreshCookie() =>
-        Response.Cookies.Delete("omni_refresh", new CookieOptions { Path = "/api/v1/auth" });
+        Response.Cookies.Delete(ResolveRefreshCookieSettings().Name, new CookieOptions { Path = _options.Session.RefreshCookiePath });
 }

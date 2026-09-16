@@ -4,9 +4,11 @@ using Crestacle.Bedrock.AspNetCore.Authorization;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Interfaces.Services;
+using Crestacle.Bedrock.Core.Options;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Crestacle.Bedrock.AspNetCore.Controllers;
 
@@ -15,8 +17,15 @@ namespace Crestacle.Bedrock.AspNetCore.Controllers;
 public sealed class BedrockPasskeyController : ControllerBase
 {
     private readonly IPasskeyService _passkeys;
+    private readonly BedrockOptions _options;
+    private readonly IBedrockRealmProvider _realmProvider;
 
-    public BedrockPasskeyController(IPasskeyService passkeys) => _passkeys = passkeys;
+    public BedrockPasskeyController(IPasskeyService passkeys, IOptions<BedrockOptions> options, IBedrockRealmProvider realmProvider)
+    {
+        _passkeys = passkeys;
+        _options = options.Value;
+        _realmProvider = realmProvider;
+    }
 
     // -------------------------------------------------------------------------
     // Registration
@@ -99,14 +108,33 @@ public sealed class BedrockPasskeyController : ControllerBase
         var result = await _passkeys.CompleteAuthenticationAsync(
             request.AssertionResponse, ip, userAgent, ct);
 
-        Response.Cookies.Append("omni_refresh", result.Tokens!.RefreshToken, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure   = true,
-            SameSite = SameSiteMode.Strict,
-            Expires  = DateTimeOffset.UtcNow.AddDays(7),
-            Path     = "/api/v1/auth",
-        });
+        // SameSite is intentionally still hardcoded Strict here, NOT read from
+        // _options.Session.RefreshCookieSameSite (unlike BedrockAuthController's own
+        // SetRefreshCookie) -- a pre-existing inconsistency between this controller and
+        // that one, found while making the cookie's Path configurable (both controllers
+        // must now share the SAME Path -- see SessionOptions.RefreshCookiePath's own
+        // remarks for why a per-action Path would break Refresh/Revoke) but deliberately
+        // NOT also fixed here: unifying SameSite too would silently change this flow's
+        // default behavior for every existing consumer of this library that uses passkey
+        // login, which is a separate decision with its own compatibility consequences,
+        // not something to fold into a Path-only change.
+        //
+        // Name/Expires realm-resolved (1-BE-09-f) via the SAME IBedrockRealmProvider
+        // BedrockAuthController uses -- Expires previously hardcoded AddDays(7) regardless
+        // of the real configured TTL (BedrockAuthController.SetRefreshCookie's own remarks
+        // cover why that's a real bug, not just a passkey-specific inconsistency).
+        var realm = _realmProvider.Resolve(HttpContext.Request.Host.Host);
+        Response.Cookies.Append(
+            realm?.RefreshCookieName ?? _options.Session.RefreshCookieName,
+            result.Tokens!.RefreshToken,
+            new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Expires = DateTimeOffset.UtcNow.Add(realm?.RefreshTokenExpiry ?? _options.Jwt.RefreshTokenExpiry),
+                Path = _options.Session.RefreshCookiePath,
+            });
 
         return Ok(BedrockResponse<LoginResponse>.Ok(new LoginResponse(
             AccessToken: result.Tokens.AccessToken,
