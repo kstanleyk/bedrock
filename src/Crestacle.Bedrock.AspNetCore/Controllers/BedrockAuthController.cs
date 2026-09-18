@@ -98,7 +98,7 @@ public sealed class BedrockAuthController : ControllerBase
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userAgent = Request.Headers.UserAgent.ToString();
         if (string.IsNullOrWhiteSpace(userAgent)) userAgent = "unknown";
-        var fingerprint = request.FingerprintHash ?? userAgent;
+        var fingerprint = ResolveFingerprint(request.FingerprintHash, userAgent);
 
         var result = await _credentials.LoginFirstFactorAsync(
             request.Email, request.Password, ip, userAgent, fingerprint, ct);
@@ -170,7 +170,7 @@ public sealed class BedrockAuthController : ControllerBase
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userAgent = Request.Headers.UserAgent.ToString();
         if (string.IsNullOrWhiteSpace(userAgent)) userAgent = "unknown";
-        var fingerprint = request.FingerprintHash ?? userAgent;
+        var fingerprint = ResolveFingerprint(request.FingerprintHash, userAgent);
 
         var userId = await _credentials.VerifyMfaAsync(
             request.ChallengeToken, request.Code, ip, userAgent, ct);
@@ -200,7 +200,7 @@ public sealed class BedrockAuthController : ControllerBase
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userAgent = Request.Headers.UserAgent.ToString();
         if (string.IsNullOrWhiteSpace(userAgent)) userAgent = "unknown";
-        var fingerprint = request.FingerprintHash ?? userAgent;
+        var fingerprint = ResolveFingerprint(request.FingerprintHash, userAgent);
 
         var tokens = await _refreshTokens.RefreshAsync(
             refreshToken, ip, userAgent, fingerprint, ct);
@@ -328,7 +328,7 @@ public sealed class BedrockAuthController : ControllerBase
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userAgent = Request.Headers.UserAgent.ToString();
         if (string.IsNullOrWhiteSpace(userAgent)) userAgent = "unknown";
-        var fingerprint = request.FingerprintHash ?? userAgent;
+        var fingerprint = ResolveFingerprint(request.FingerprintHash, userAgent);
 
         var result = await _credentials.VerifyMagicLinkAsync(request.TokenHash, ip, userAgent, ct);
 
@@ -444,4 +444,17 @@ public sealed class BedrockAuthController : ControllerBase
 
     private void DeleteRefreshCookie() =>
         Response.Cookies.Delete(ResolveRefreshCookieSettings().Name, new CookieOptions { Path = _options.Session.RefreshCookiePath });
+
+    // device_fingerprint is varchar(128) (see SessionConfiguration/RefreshTokenConfiguration). When
+    // a client sends no explicit FingerprintHash, this falls back to the raw User-Agent header —
+    // headless Chrome/Chromium's default UA is 129 chars and overflows that column, turning every
+    // login from a headless client into an unhandled 500 (Npgsql 22001). Truncate defensively so
+    // the fallback always fits, regardless of how long a real client's UA string gets.
+    private const int MaxFingerprintLength = 128;
+
+    private static string ResolveFingerprint(string? fingerprintHash, string userAgent)
+    {
+        var fingerprint = fingerprintHash ?? userAgent;
+        return fingerprint.Length > MaxFingerprintLength ? fingerprint[..MaxFingerprintLength] : fingerprint;
+    }
 }
