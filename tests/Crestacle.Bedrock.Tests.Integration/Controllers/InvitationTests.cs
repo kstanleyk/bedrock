@@ -5,6 +5,7 @@ using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Enumerations;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
@@ -20,6 +21,7 @@ public sealed class InvitationTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string AdminPassword = "AdminP@ssword1!";
     private const string InviteePassword = "InviteeP@ssword1!";
@@ -27,7 +29,11 @@ public sealed class InvitationTests : IDisposable
     public InvitationTests()
     {
         _server = new BedrockTestServer(
-            configureServices: s => s.AddSingleton<IBedrockClaimsEnricher, AdminClaimsEnricher>());
+            configureServices: s =>
+            {
+                s.AddSingleton<IBedrockClaimsEnricher, AdminClaimsEnricher>();
+                s.AddSingleton<IEmailSender>(_emailSender);
+            });
         _client = _server.Client;
     }
 
@@ -53,17 +59,15 @@ public sealed class InvitationTests : IDisposable
 
         createResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Fetch the raw token hash from the DB (simulates clicking the link in the email)
-        var tokenHash = _server.DbContext.Invitations
-            .First(i => i.TargetEmail == inviteeEmail)
-            .TokenHash;
+        // The real raw token the invitee would receive by email (simulates clicking the link).
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(inviteeEmail)!);
 
         _client.DefaultRequestHeaders.Authorization = null;
 
         // Invitee accepts the invitation
         var acceptResponse = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/accept-invitation",
-            new AcceptInvitationRequest(tokenHash, InviteePassword));
+            new AcceptInvitationRequest(rawToken, InviteePassword));
 
         acceptResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadBedrockResponseAsync<LoginResponse>(acceptResponse);
@@ -88,15 +92,13 @@ public sealed class InvitationTests : IDisposable
             "/api/bedrock/admin/invitations",
             new CreateInvitationRequest(inviteeEmail));
 
-        var tokenHash = _server.DbContext.Invitations
-            .First(i => i.TargetEmail == inviteeEmail)
-            .TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(inviteeEmail)!);
 
         _client.DefaultRequestHeaders.Authorization = null;
 
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/accept-invitation",
-            new AcceptInvitationRequest(tokenHash, InviteePassword));
+            new AcceptInvitationRequest(rawToken, InviteePassword));
 
         var credential = _server.DbContext.UserCredentials
             .First(c => c.Email == inviteeEmail);
@@ -119,15 +121,13 @@ public sealed class InvitationTests : IDisposable
             "/api/bedrock/admin/invitations",
             new CreateInvitationRequest(inviteeEmail));
 
-        var tokenHash = _server.DbContext.Invitations
-            .First(i => i.TargetEmail == inviteeEmail)
-            .TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(inviteeEmail)!);
 
         _client.DefaultRequestHeaders.Authorization = null;
 
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/accept-invitation",
-            new AcceptInvitationRequest(tokenHash, InviteePassword));
+            new AcceptInvitationRequest(rawToken, InviteePassword));
 
         var invitation = _server.DbContext.Invitations
             .First(i => i.TargetEmail == inviteeEmail);
@@ -154,21 +154,19 @@ public sealed class InvitationTests : IDisposable
             "/api/bedrock/admin/invitations",
             new CreateInvitationRequest(inviteeEmail));
 
-        var tokenHash = _server.DbContext.Invitations
-            .First(i => i.TargetEmail == inviteeEmail)
-            .TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(inviteeEmail)!);
 
         _client.DefaultRequestHeaders.Authorization = null;
 
         // First acceptance succeeds
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/accept-invitation",
-            new AcceptInvitationRequest(tokenHash, InviteePassword));
+            new AcceptInvitationRequest(rawToken, InviteePassword));
 
         // Second attempt must fail — invitation already accepted and email already registered
         var secondResponse = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/accept-invitation",
-            new AcceptInvitationRequest(tokenHash, InviteePassword));
+            new AcceptInvitationRequest(rawToken, InviteePassword));
 
         secondResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
@@ -194,11 +192,13 @@ public sealed class InvitationTests : IDisposable
     [Fact]
     public async Task CreateInvitation_WithoutAdminClaim_Returns403()
     {
-        using var plainServer = new BedrockTestServer();
+        var plainEmailSender = new CapturingEmailSender();
+        using var plainServer = new BedrockTestServer(
+            configureServices: s => s.AddSingleton<IEmailSender>(plainEmailSender));
         using var plainClient = plainServer.Client;
 
         var email = "inv-noadmin@example.com";
-        await RegisterAndActivateAsync(email, plainClient, plainServer);
+        await RegisterAndActivateAsync(email, plainClient, plainEmailSender);
         var token = await GetTokenAsync(email, AdminPassword, plainClient);
         plainClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", token);
@@ -215,17 +215,16 @@ public sealed class InvitationTests : IDisposable
     // -------------------------------------------------------------------------
 
     private async Task RegisterAndActivateAsync(string email)
-        => await RegisterAndActivateAsync(email, _client, _server);
+        => await RegisterAndActivateAsync(email, _client, _emailSender);
 
     private static async Task RegisterAndActivateAsync(
-        string email, HttpClient client, BedrockTestServer server)
+        string email, HttpClient client, CapturingEmailSender emailSender)
     {
         await client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, AdminPassword));
 
-        var userId = server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(emailSender.LastBodyFor(email)!);
 
-        await client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(tokenHash));
+        await client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
     }
 
     private async Task<string> GetTokenAsync(string email, string password)

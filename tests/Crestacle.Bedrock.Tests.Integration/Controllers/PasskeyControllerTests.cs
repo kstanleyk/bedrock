@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using Fido2NetLib;
 using FluentAssertions;
@@ -19,11 +20,16 @@ public sealed class PasskeyControllerTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     public PasskeyControllerTests()
     {
         _server = new BedrockTestServer(
-            configureServices: s => s.AddSingleton<IFido2, FakeFido2>());
+            configureServices: s =>
+            {
+                s.AddSingleton<IFido2, FakeFido2>();
+                s.AddSingleton<IEmailSender>(_emailSender);
+            });
         _client = _server.Client;
     }
 
@@ -193,9 +199,8 @@ public sealed class PasskeyControllerTests : IDisposable
             "/api/bedrock/auth/register",
             new RegisterRequest(email, ValidPassword));
 
-        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = _server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
-        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(tokenHash));
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
+        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
 
         var loginResponse = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/login",

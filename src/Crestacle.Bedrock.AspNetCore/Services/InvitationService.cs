@@ -76,12 +76,13 @@ internal sealed partial class InvitationService : IInvitationService
     }
 
     public async Task<TokenPair> AcceptInvitationAsync(
-        string tokenHash,
+        string rawToken,
         string password,
         string ipAddress,
         string userAgent,
         CancellationToken ct = default)
     {
+        var tokenHash = ComputeTokenHash(rawToken);
         var invitation = await _invitationRepo.GetByHashAsync(tokenHash, ct);
         if (invitation is null || !invitation.IsValid)
             throw new BedrockValidationException("Invitation is invalid or has expired.");

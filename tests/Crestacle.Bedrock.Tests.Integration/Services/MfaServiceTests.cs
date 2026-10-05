@@ -19,7 +19,8 @@ public sealed class MfaServiceTests : IDisposable
     private sealed class CapturingEmailSender : IEmailSender
     {
         public string? LastOtpCode { get; private set; }
-        public Task SendEmailVerificationAsync(string e, string u, CancellationToken ct = default) => Task.CompletedTask;
+        public string? LastVerificationUrl { get; private set; }
+        public Task SendEmailVerificationAsync(string e, string u, CancellationToken ct = default) { LastVerificationUrl = u; return Task.CompletedTask; }
         public Task SendPasswordResetAsync(string e, string u, CancellationToken ct = default) => Task.CompletedTask;
         public Task SendAccountLockedAsync(string e, DateTime d, CancellationToken ct = default) => Task.CompletedTask;
         public Task SendMfaOtpAsync(string e, string code, CancellationToken ct = default) { LastOtpCode = code; return Task.CompletedTask; }
@@ -70,8 +71,10 @@ public sealed class MfaServiceTests : IDisposable
     {
         var userId = Guid.NewGuid();
         await _service.RegisterAsync(userId, email, ValidPassword);
-        var tokenHash = _context.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
-        await _service.ConfirmEmailAsync(tokenHash);
+        // The real raw token a user would receive by email (not the stored hash).
+        var rawToken = Crestacle.Bedrock.Tests.Integration.Infrastructure.CapturingEmailSender
+            .ExtractToken(_emailSender.LastVerificationUrl!);
+        await _service.ConfirmEmailAsync(rawToken);
         return userId;
     }
 
@@ -413,10 +416,11 @@ public sealed class MfaServiceTests : IDisposable
         using var _ = conn;
         using var __ = ctx;
 
+        var mandatoryEmailSender = new CapturingEmailSender();
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<BedrockContext>(ctx);
-        services.AddSingleton<IEmailSender>(new CapturingEmailSender());
+        services.AddSingleton<IEmailSender>(mandatoryEmailSender);
         services.AddBedrockEntityFramework<BedrockContext>();
         services.AddBedrockAspNetCore(opts =>
         {
@@ -432,8 +436,10 @@ public sealed class MfaServiceTests : IDisposable
 
         var userId = Guid.NewGuid();
         await svc.RegisterAsync(userId, "mandatory@example.com", ValidPassword);
-        var tokenHash = ctx.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
-        await svc.ConfirmEmailAsync(tokenHash);
+        // The real raw token a user would receive by email (not the stored hash).
+        var rawToken = Crestacle.Bedrock.Tests.Integration.Infrastructure.CapturingEmailSender
+            .ExtractToken(mandatoryEmailSender.LastVerificationUrl!);
+        await svc.ConfirmEmailAsync(rawToken);
 
         var result = await svc.LoginFirstFactorAsync(
             "mandatory@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");

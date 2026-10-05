@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
@@ -19,13 +20,18 @@ public sealed class AdminControllerTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
 
     public AdminControllerTests()
     {
         _server = new BedrockTestServer(
-            configureServices: s => s.AddSingleton<IBedrockClaimsEnricher, AdminClaimsEnricher>());
+            configureServices: s =>
+            {
+                s.AddSingleton<IBedrockClaimsEnricher, AdminClaimsEnricher>();
+                s.AddSingleton<IEmailSender>(_emailSender);
+            });
         _client = _server.Client;
     }
 
@@ -290,11 +296,13 @@ public sealed class AdminControllerTests : IDisposable
     [Fact]
     public async Task AdminEndpoints_WithoutAdminClaim_Return403()
     {
-        using var plainServer = new BedrockTestServer();
+        var plainEmailSender = new CapturingEmailSender();
+        using var plainServer = new BedrockTestServer(
+            configureServices: s => s.AddSingleton<IEmailSender>(plainEmailSender));
         using var plainClient = plainServer.Client;
 
         var email = "admin-noadmin@example.com";
-        await RegisterAndActivateAsync(email, plainClient, plainServer);
+        await RegisterAndActivateAsync(email, plainClient, plainEmailSender);
 
         var loginResponse = await plainClient.PostAsJsonAsync(
             "/api/bedrock/auth/login",
@@ -320,17 +328,16 @@ public sealed class AdminControllerTests : IDisposable
     // -------------------------------------------------------------------------
 
     private async Task RegisterAndActivateAsync(string email)
-        => await RegisterAndActivateAsync(email, _client, _server);
+        => await RegisterAndActivateAsync(email, _client, _emailSender);
 
     private static async Task RegisterAndActivateAsync(
-        string email, HttpClient client, BedrockTestServer server)
+        string email, HttpClient client, CapturingEmailSender emailSender)
     {
         await client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, ValidPassword));
 
-        var userId = server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(emailSender.LastBodyFor(email)!);
 
-        await client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(tokenHash));
+        await client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
     }
 
     private async Task<string> GetAdminTokenAsync(string email)

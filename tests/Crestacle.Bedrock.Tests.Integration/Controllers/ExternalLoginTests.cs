@@ -5,6 +5,7 @@ using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Enumerations;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
@@ -21,12 +22,16 @@ public sealed class ExternalLoginTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     public ExternalLoginTests()
     {
         _server = new BedrockTestServer(
             configureServices: services =>
-                services.AddScoped<IExternalIdentityValidator, FakeExternalIdentityValidator>());
+            {
+                services.AddScoped<IExternalIdentityValidator, FakeExternalIdentityValidator>();
+                services.AddSingleton<IEmailSender>(_emailSender);
+            });
         _client = _server.Client;
     }
 
@@ -275,14 +280,12 @@ public sealed class ExternalLoginTests : IDisposable
         await _client.PostAsJsonAsync("/api/bedrock/auth/register",
             new RegisterRequest(email, ValidPassword));
 
-        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = _server.DbContext.EmailVerificationTokens
-            .First(t => t.UserId == userId).TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
 
         await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email",
-            new ConfirmEmailRequest(tokenHash));
+            new ConfirmEmailRequest(rawToken));
 
-        return userId;
+        return _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
     }
 
     private async Task<string> LoginAndGetTokenAsync(string email)

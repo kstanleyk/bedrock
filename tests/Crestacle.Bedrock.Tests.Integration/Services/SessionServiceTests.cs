@@ -1,5 +1,6 @@
 using Crestacle.Bedrock.AspNetCore.Extensions;
 using Crestacle.Bedrock.Core.Exceptions;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.EntityFramework;
 using Crestacle.Bedrock.EntityFramework.Extensions;
@@ -18,6 +19,7 @@ public sealed class SessionServiceTests : IDisposable
     private readonly ICredentialService _credentialService;
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly ISessionService _sessionService;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
     private const string TestSigningKey = "Bedrock-Integration-Test-Signing-Key-32B!";
@@ -29,6 +31,7 @@ public sealed class SessionServiceTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<BedrockContext>(_context);
+        services.AddSingleton<IEmailSender>(_emailSender);
         services.AddBedrockEntityFramework<BedrockContext>();
         services.AddBedrockAspNetCore(opts =>
         {
@@ -58,8 +61,8 @@ public sealed class SessionServiceTests : IDisposable
     {
         var userId = Guid.NewGuid();
         await _credentialService.RegisterAsync(userId, email, ValidPassword);
-        var tokenHash = _context.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
-        await _credentialService.ConfirmEmailAsync(tokenHash);
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
+        await _credentialService.ConfirmEmailAsync(rawToken);
         return userId;
     }
 

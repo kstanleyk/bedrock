@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
@@ -22,12 +23,14 @@ public sealed class HardeningTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
 
     public HardeningTests()
     {
-        _server = new BedrockTestServer();
+        _server = new BedrockTestServer(
+            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
         _client = _server.Client;
     }
 
@@ -46,12 +49,11 @@ public sealed class HardeningTests : IDisposable
             new RegisterRequest(email, ValidPassword));
         reg.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Confirm email
-        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = _server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
+        // Confirm email — the real raw token a user would receive (not the stored hash).
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
         var confirm = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/confirm-email",
-            new ConfirmEmailRequest(tokenHash));
+            new ConfirmEmailRequest(rawToken));
         confirm.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // Login → get access + refresh tokens
@@ -366,9 +368,8 @@ public sealed class HardeningTests : IDisposable
     private async Task RegisterAndActivateAsync(string email)
     {
         await _client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, ValidPassword));
-        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = _server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
-        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(tokenHash));
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
+        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
     }
 
     private async Task<LoginResponse> RegisterActivateAndLoginAsync(string email)

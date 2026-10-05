@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Crestacle.Bedrock.Tests.Integration.Controllers;
@@ -15,12 +17,14 @@ public sealed class EmailChangeTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
 
     public EmailChangeTests()
     {
-        _server = new BedrockTestServer();
+        _server = new BedrockTestServer(
+            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
         _client = _server.Client;
     }
 
@@ -46,16 +50,17 @@ public sealed class EmailChangeTests : IDisposable
             new RequestEmailChangeRequest(newEmail));
         requestResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Read the token hash directly from the test DB
         var userId = _server.DbContext.UserCredentials.First(c => c.Email == oldEmail).UserId;
-        var tokenHash = _server.DbContext.EmailChangeTokens.First(t => t.UserId == userId).TokenHash;
+
+        // The real raw token a user would receive at the new address (not the stored hash).
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(newEmail)!);
 
         _client.DefaultRequestHeaders.Authorization = null;
 
         // Confirm the email change (anonymous)
         var confirmResponse = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/confirm-email-change",
-            new ConfirmEmailChangeRequest(tokenHash));
+            new ConfirmEmailChangeRequest(rawToken));
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // Assert credential email is updated
@@ -117,10 +122,9 @@ public sealed class EmailChangeTests : IDisposable
     {
         await _client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, ValidPassword));
 
-        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = _server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
 
-        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(tokenHash));
+        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
     }
 
     private async Task<LoginResponse> LoginAsync(string email)

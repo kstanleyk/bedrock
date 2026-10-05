@@ -31,7 +31,7 @@ public interface IInvitationService
     /// marks the invitation as accepted, writes an <c>InvitationAccepted</c> audit entry,
     /// and issues login tokens.
     /// </summary>
-    /// <param name="tokenHash">The hashed invitation token from the acceptance link.</param>
+    /// <param name="rawToken">The raw invitation token from the acceptance link (not pre-hashed).</param>
     /// <param name="password">The plaintext password chosen by the new user.</param>
     /// <param name="ipAddress">The requesting IP address, recorded in the audit log.</param>
     /// <param name="userAgent">The User-Agent header of the request.</param>
@@ -42,7 +42,7 @@ public interface IInvitationService
     /// password fails complexity validation.
     /// </exception>
     Task<TokenPair> AcceptInvitationAsync(
-        string tokenHash,
+        string rawToken,
         string password,
         string ipAddress,
         string userAgent,
