@@ -89,9 +89,13 @@ Follows the existing `Crestacle.Sentinel.*` split:
   three aggregates, default repository implementations, `AddSentinelControlsEntityFramework(...)`.
   Depends on `Crestacle.Sentinel.Controls` + `Crestacle.Sentinel.EntityFramework`.
 - **`Crestacle.Sentinel.Controls.AspNetCore`** — `[RequiresControl]` filter, a Bedrock-backed
-  `IStepUpContext` default implementation (wraps `Crestacle.Bedrock.AspNetCore`'s existing
-  `StepUpService`), the co-sign bridge default implementation, admin policy DTOs,
-  `AddSentinelControlsAspNetCore(...)`. Depends on `Crestacle.Sentinel.Controls` +
+  `IStepUpContext` default implementation (wraps `Crestacle.Bedrock.Core`'s existing
+  `ITokenService.ValidateAndExtractStepUp` — the same per-request validation call
+  `RequiresStepUpAttribute` already uses; `Services/StepUpService.cs` is a different part of the
+  flow, the earlier MFA-challenge issuance step, not what this adapter wraps — corrected
+  2026-10-06 after a second-host migration doc caught the mismatch), the co-sign bridge default
+  implementation, admin policy DTOs, `AddSentinelControlsAspNetCore(...)`. Depends on
+  `Crestacle.Sentinel.Controls` +
   `Crestacle.Sentinel.AspNetCore` + `Crestacle.Bedrock.AspNetCore`.
 
 ## 5. Locked decisions

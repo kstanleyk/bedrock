@@ -364,11 +364,18 @@ re-auth mechanism in this same repo); co-sign ships a default too, per §7a Q1.
    StepUpReference(); } as-is (interface here; default implementation in the AspNetCore package).
 
 3. In src/Crestacle.Sentinel.Controls.AspNetCore/:
-   - Default IStepUpContext implementation wrapping Crestacle.Bedrock.AspNetCore's existing
-     StepUpService (find it in src/Crestacle.Bedrock.AspNetCore/Services/StepUpService.cs and its
-     IStepUpService interface in Crestacle.Bedrock.Core) — read the current request's step-up proof
-     via whatever mechanism RequiresStepUpAttribute already uses, so this is a thin adapter, not new
-     logic.
+   - Default IStepUpContext implementation wrapping Crestacle.Bedrock.Core's existing
+     ITokenService.ValidateAndExtractStepUp(token, expectedUserId) — the exact call
+     RequiresStepUpAttribute (src/Crestacle.Bedrock.AspNetCore/Authorization/RequiresStepUpAttribute.cs)
+     already uses, reading the token from the same "X-Step-Up-Token" header. CORRECTION (caught by
+     omni-api's migration doc, 2026-10-06): this is NOT StepUpService
+     (src/Crestacle.Bedrock.AspNetCore/Services/StepUpService.cs) — that class only handles the
+     earlier MFA-challenge issuance flow (InitiateAsync/VerifyAsync), a different part of the
+     pipeline. Confirmed by reading RequiresStepUpAttribute directly: it never touches StepUpService.
+     Also confirmed both current hosts' own IStepUpContext implementations never mark the token
+     single-use at this validation point (only RequiresStepUpAttribute's own filter path does
+     that, for its own unrelated use of step-up tokens) — this default should match that: validate
+     and report freshness only, no side effect on the challenge record.
    - A default ICoSignContext implementation reading a second bearer token from an "X-CoSign-Token"
      request header, then checking co-signer != actor via the current user context. CORRECTION vs.
      the source: do NOT port omni's SentinelCoSignContext.cs token-validation block verbatim — it
@@ -401,9 +408,12 @@ git push origin dev
 Verify Slice E4. Working directory: /Users/kstanleyk/Developer/libs/bedrock
 
 1. dotnet build Bedrock.slnx — zero errors, zero warnings.
-2. The default IStepUpContext implementation calls into Crestacle.Bedrock.AspNetCore's existing
-   StepUpService — grep confirms no new token type, no new auth stack was introduced (design.md's
-   whole premise for step-up is "already free").
+2. The default IStepUpContext implementation calls ITokenService.ValidateAndExtractStepUp (NOT
+   StepUpService, a different part of the flow — confirm by grep that this implementation never
+   references StepUpService at all), reading the "X-Step-Up-Token" header — grep confirms no new
+   token type, no new auth stack was introduced (design.md's whole premise for step-up is "already
+   free"), and no single-use/MarkUsed side effect was added (validation only, matching both current
+   hosts' own pre-migration behavior at this layer).
 3. A working default ICoSignContext ships (per §7a Q1), documented with its request-carriage
    convention (X-CoSign-Token header), and its token validation calls Bedrock's own validator — grep
    confirms no second hand-rolled JwtSecurityTokenHandler/TokenValidationParameters block was
