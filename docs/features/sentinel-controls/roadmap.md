@@ -57,4 +57,6 @@ Design source: `docs/features/sentinel-controls/design.md`
 
 ## Completion
 - [ ] All packages build clean, `dotnet pack` succeeds, sample host exercises every mechanism
-- [ ] `omni-api/docs/features/migrate-to-sentinel-controls/` may begin
+- [ ] `omni-api/docs/features/migrate-to-sentinel-controls/` and `bursary-api/CONTROL_POLICY_ROADMAP.md`
+      may both begin — independently, on their own schedules (2026-10-06 decision: bursary no
+      longer waits on omni's migration; see `CONTROL_POLICY_ROADMAP.md`'s own note)

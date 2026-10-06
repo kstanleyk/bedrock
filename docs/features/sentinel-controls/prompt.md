@@ -744,6 +744,8 @@ E0-E9 complete. Working directory: /Users/kstanleyk/Developer/libs/bedrock
 5. Root README.md and docs/architecture.md/docs/api-reference.md reflect the three new packages.
 6. git log on dev shows the E0-E9 slice commits.
 
-If all 6 pass: the extraction is done. omni-api/docs/features/migrate-to-sentinel-controls/ may
-begin. Update docs/features/sentinel-controls/roadmap.md (tick E0-E9 and Completion).
+If all 6 pass: the extraction is done. omni-api/docs/features/migrate-to-sentinel-controls/ and
+bursary-api/CONTROL_POLICY_ROADMAP.md may both begin, independently and in either order (2026-10-06
+decision — bursary no longer waits on omni's migration). Update
+docs/features/sentinel-controls/roadmap.md (tick E0-E9 and Completion).
 ```
