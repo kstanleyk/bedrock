@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Crestacle.Bedrock.Tests.Integration.Controllers;
@@ -15,12 +17,14 @@ public sealed class MagicLinkTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
 
     public MagicLinkTests()
     {
-        _server = new BedrockTestServer();
+        _server = new BedrockTestServer(
+            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
         _client = _server.Client;
     }
 
@@ -85,11 +89,11 @@ public sealed class MagicLinkTests : IDisposable
             "/api/bedrock/auth/magic-link",
             new MagicLinkRequest(email));
 
-        var tokenHash = GetMagicLinkTokenHash(email);
+        var rawToken = GetMagicLinkRawToken(email);
 
         var response = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link/verify",
-            new VerifyMagicLinkRequest(tokenHash));
+            new VerifyMagicLinkRequest(rawToken));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadBedrockResponseAsync<LoginResponse>(response);
@@ -107,10 +111,13 @@ public sealed class MagicLinkTests : IDisposable
             "/api/bedrock/auth/magic-link",
             new MagicLinkRequest(email));
 
+        // The stored hash (for the post-consumption DB lookup) and the raw token the user
+        // actually received (for the request body) are different values — capture both.
         var tokenHash = GetMagicLinkTokenHash(email);
+        var rawToken = GetMagicLinkRawToken(email);
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link/verify",
-            new VerifyMagicLinkRequest(tokenHash));
+            new VerifyMagicLinkRequest(rawToken));
 
         _server.DbContext.ChangeTracker.Clear();
         var token = _server.DbContext.MagicLinkTokens.First(t => t.TokenHash == tokenHash);
@@ -126,15 +133,15 @@ public sealed class MagicLinkTests : IDisposable
             "/api/bedrock/auth/magic-link",
             new MagicLinkRequest(email));
 
-        var tokenHash = GetMagicLinkTokenHash(email);
+        var rawToken = GetMagicLinkRawToken(email);
 
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link/verify",
-            new VerifyMagicLinkRequest(tokenHash));
+            new VerifyMagicLinkRequest(rawToken));
 
         var secondResponse = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link/verify",
-            new VerifyMagicLinkRequest(tokenHash));
+            new VerifyMagicLinkRequest(rawToken));
 
         secondResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -162,7 +169,7 @@ public sealed class MagicLinkTests : IDisposable
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link",
             new MagicLinkRequest(email));
-        var firstHash = GetMagicLinkTokenHash(email);
+        var firstRawToken = GetMagicLinkRawToken(email);
 
         // Second request should invalidate the first token
         await _client.PostAsJsonAsync(
@@ -171,7 +178,7 @@ public sealed class MagicLinkTests : IDisposable
 
         var firstTokenResponse = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link/verify",
-            new VerifyMagicLinkRequest(firstHash));
+            new VerifyMagicLinkRequest(firstRawToken));
 
         firstTokenResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -197,11 +204,11 @@ public sealed class MagicLinkTests : IDisposable
             "/api/bedrock/auth/magic-link",
             new MagicLinkRequest(email));
 
-        var tokenHash = GetMagicLinkTokenHash(email);
+        var rawToken = GetMagicLinkRawToken(email);
 
         var response = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link/verify",
-            new VerifyMagicLinkRequest(tokenHash));
+            new VerifyMagicLinkRequest(rawToken));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadBedrockResponseAsync<LoginResponse>(response);
@@ -225,11 +232,11 @@ public sealed class MagicLinkTests : IDisposable
             "/api/bedrock/auth/magic-link",
             new MagicLinkRequest(email));
 
-        var tokenHash = GetMagicLinkTokenHash(email);
+        var rawToken = GetMagicLinkRawToken(email);
 
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/magic-link/verify",
-            new VerifyMagicLinkRequest(tokenHash));
+            new VerifyMagicLinkRequest(rawToken));
 
         _server.DbContext.ChangeTracker.Clear();
         var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
@@ -249,10 +256,13 @@ public sealed class MagicLinkTests : IDisposable
     private async Task RegisterAndActivateAsync(string email)
     {
         await _client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, ValidPassword));
-        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = _server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
-        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(tokenHash));
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
+        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
     }
+
+    // The real raw token a user would receive by email — for the verify request body.
+    private string GetMagicLinkRawToken(string email)
+        => CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
 
     private async Task<LoginResponse> LoginAsync(string email)
     {

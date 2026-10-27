@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Crestacle.Bedrock.Tests.Integration.Controllers;
@@ -20,6 +22,7 @@ public sealed class PerformanceTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string Email = "perf-refresh@example.com";
     private const string Password = "ValidP@ssword1!";
@@ -30,7 +33,8 @@ public sealed class PerformanceTests : IDisposable
 
     public PerformanceTests()
     {
-        _server = new BedrockTestServer();
+        _server = new BedrockTestServer(
+            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
         _client = _server.Client;
     }
 
@@ -42,14 +46,11 @@ public sealed class PerformanceTests : IDisposable
             "/api/bedrock/auth/register",
             new RegisterRequest(Email, Password));
 
-        var tokenHash = _server.DbContext.EmailVerificationTokens
-            .First(t => t.UserId == _server.DbContext.UserCredentials
-                .First(c => c.Email == Email).UserId)
-            .TokenHash;
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(Email)!);
 
         await _client.PostAsJsonAsync(
             "/api/bedrock/auth/confirm-email",
-            new ConfirmEmailRequest(tokenHash));
+            new ConfirmEmailRequest(rawToken));
 
         var loginResp = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/login",

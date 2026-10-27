@@ -31,15 +31,26 @@ internal sealed class SessionRepository : ISessionRepository
     public async Task AddAsync(Session session, CancellationToken ct = default)
         => await _context.Sessions.AddAsync(session, ct);
 
-    public Task UpdateAsync(Session session, CancellationToken ct = default)
+    public async Task UpdateAsync(Session session, CancellationToken ct = default)
     {
         var tracked = _context.ChangeTracker.Entries<Session>()
             .FirstOrDefault(e => e.Entity.Id == session.Id);
         if (tracked is not null)
+        {
             tracked.CurrentValues.SetValues(session);
-        else
-            _context.Sessions.Update(session);
-        return Task.CompletedTask;
+            return;
+        }
+
+        // Same fix as CredentialRepository.UpdateAsync (this class's own sibling) --
+        // GetByIdAsync/GetByTokenHashAsync both read AsNoTracking, so a blanket
+        // `_context.Sessions.Update(session)` attach on a genuinely fresh scope loses
+        // the row's real xmin concurrency token, making the concurrency check always
+        // compare against the CLR default (0) and always report "0 rows affected." A
+        // tracked stub loaded by primary key first captures the real xmin before
+        // CurrentValues.SetValues overlays the caller's own field values onto it.
+        var trackedStub = await _context.Sessions.FindAsync([session.Id], ct)
+            ?? throw new InvalidOperationException($"Session {session.Id} not found for update.");
+        _context.Entry(trackedStub).CurrentValues.SetValues(session);
     }
 
     public async Task RevokeAllForUserAsync(Guid userId, string byIp, CancellationToken ct = default)

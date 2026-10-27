@@ -47,7 +47,7 @@ public sealed class JwtServiceTests
         var userId = Guid.NewGuid();
         var token = svc.GenerateAccessToken(userId, "u@test.com", ["admin", "user"], "tenant1");
 
-        // MapInboundClaims = false so we see the raw JWT claim names (e.g. "role", not ClaimTypes.Role URI)
+        // MapInboundClaims = false so we see the raw JWT claim names (e.g. "roles", not ClaimTypes.Role URI)
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
         var jwt = handler.ReadJwtToken(token);
 
@@ -56,8 +56,15 @@ public sealed class JwtServiceTests
         jwt.Claims.Should().Contain(c => c.Type == "email" && c.Value == "u@test.com");
         jwt.Claims.Should().Contain(c => c.Type == "token_type" && c.Value == "access");
         jwt.Claims.Should().Contain(c => c.Type == "tenant_id" && c.Value == "tenant1");
-        // JwtSecurityTokenHandler maps ClaimTypes.Role outbound to the short-form JWT claim "role"
-        jwt.Claims.Count(c => c.Type == "role").Should().Be(2);
+        // Corrected (1-BE-09-f, crestacle-core): roles are now emitted under the literal key
+        // "roles" as a genuine JSON array (JsonClaimValueTypes.JsonArray), not ClaimTypes.Role's
+        // default outbound-mapped short key "role" -- verified against a real issued token that
+        // the OLD "role" key was genuinely incompatible with crestacle-web's own already-built
+        // AccessTokenClaims contract (packages/auth/src/jwt.ts: `roles: string[]`, always an
+        // array). JwtSecurityToken.Claims flattens a JSON-array-valued claim into one Claim per
+        // element, same count as before, under the corrected key.
+        jwt.Claims.Count(c => c.Type == "roles").Should().Be(2);
+        jwt.Claims.Select(c => c.Value).Should().Contain(["admin", "user"]);
         jwt.Claims.Should().Contain(c => c.Type == "jti");
     }
 

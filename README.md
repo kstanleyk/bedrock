@@ -73,6 +73,8 @@ All auth endpoints are now available under `api/bedrock/` — see the [API refer
 - [API reference](docs/api-reference.md) — all HTTP endpoints
 - [Security guide](docs/security.md) — production hardening checklist
 - [Multi-tenancy](docs/multi-tenancy.md) — tenant isolation setup
+- [Quality roadmap](docs/quality-roadmap.md) — known defects and the phased plan to close them
+- [Features roadmap](docs/features-roadmap.md) — capability gaps and proposed additions
 
 ### Integrations
 

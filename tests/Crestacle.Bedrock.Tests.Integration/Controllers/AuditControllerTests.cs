@@ -5,8 +5,10 @@ using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Enumerations;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Crestacle.Bedrock.Tests.Integration.Controllers;
@@ -17,12 +19,14 @@ public sealed class AuditControllerTests : IDisposable
 
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
 
     public AuditControllerTests()
     {
-        _server = new BedrockTestServer();
+        _server = new BedrockTestServer(
+            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
         _client = _server.Client;
     }
 
@@ -142,9 +146,9 @@ public sealed class AuditControllerTests : IDisposable
     {
         await _client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, ValidPassword));
 
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
+        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
         var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
-        var tokenHash = _server.DbContext.EmailVerificationTokens.First(t => t.UserId == userId).TokenHash;
-        await _client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(tokenHash));
 
         var loginResp = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/login",

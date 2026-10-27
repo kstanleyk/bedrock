@@ -22,15 +22,32 @@ internal sealed class CredentialRepository : ICredentialRepository
     public async Task AddAsync(UserCredential credential, CancellationToken ct = default)
         => await _context.UserCredentials.AddAsync(credential, ct);
 
-    public Task UpdateAsync(UserCredential credential, CancellationToken ct = default)
+    public async Task UpdateAsync(UserCredential credential, CancellationToken ct = default)
     {
         var tracked = _context.ChangeTracker.Entries<UserCredential>()
             .FirstOrDefault(e => e.Entity.Id == credential.Id);
         if (tracked is not null)
+        {
             tracked.CurrentValues.SetValues(credential);
-        else
-            _context.UserCredentials.Update(credential);
-        return Task.CompletedTask;
+            return;
+        }
+
+        // No tracked entry exists in this DbContext scope -- true whenever this method
+        // is called against a genuinely fresh request/scope (this repository's own
+        // GetByUserIdAsync/GetByEmailAsync both read AsNoTracking by design). A blanket
+        // `_context.UserCredentials.Update(credential)` attach here loses the row's real
+        // xmin concurrency token -- an AsNoTracking-materialized object never carries
+        // one as a shadow property -- so the generated `WHERE ... AND xmin = @p` always
+        // compares against the CLR default (0), and since Postgres transaction ids are
+        // never 0, the UPDATE always reports "0 rows affected"
+        // (DbUpdateConcurrencyException) on every real, separate-request call. Loading a
+        // genuinely tracked stub by primary key first captures the row's real, current
+        // xmin before CurrentValues.SetValues overlays the caller's own field values
+        // onto it, so the concurrency check is correct regardless of how the caller
+        // originally obtained `credential`.
+        var trackedStub = await _context.UserCredentials.FindAsync([credential.Id], ct)
+            ?? throw new InvalidOperationException($"UserCredential {credential.Id} not found for update.");
+        _context.Entry(trackedStub).CurrentValues.SetValues(credential);
     }
 
     public async Task<bool> ExistsByEmailAsync(string email, CancellationToken ct = default)

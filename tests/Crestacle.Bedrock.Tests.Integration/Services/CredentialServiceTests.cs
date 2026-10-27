@@ -1,5 +1,6 @@
 using Crestacle.Bedrock.AspNetCore.Extensions;
 using Crestacle.Bedrock.Core.Exceptions;
+using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Core.Options;
 using Crestacle.Bedrock.EntityFramework;
@@ -16,6 +17,7 @@ public sealed class CredentialServiceTests : IDisposable
     private readonly TestBedrockContext _context;
     private readonly Microsoft.Data.Sqlite.SqliteConnection _connection;
     private readonly ICredentialService _service;
+    private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
 
@@ -26,6 +28,7 @@ public sealed class CredentialServiceTests : IDisposable
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<BedrockContext>(_context)
+            .AddSingleton<IEmailSender>(_emailSender)
             .AddBedrockEntityFramework<BedrockContext>()
             .AddBedrockAspNetCore(opts =>
             {
@@ -84,27 +87,14 @@ public sealed class CredentialServiceTests : IDisposable
     public async Task ConfirmEmailAsync_ValidToken_SetsEmailConfirmedAndActiveStatus()
     {
         var userId = Guid.NewGuid();
-        await _service.RegisterAsync(userId, "confirm@example.com", ValidPassword);
+        const string email = "confirm@example.com";
+        await _service.RegisterAsync(userId, email, ValidPassword);
 
-        var token = _context.EmailVerificationTokens.First(t => t.UserId == userId);
+        // The real raw token a user would receive by email — RegisterAsync hashes it before
+        // storing, so confirming with this (not the stored hash) is the real round trip.
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
 
-        // Recompute the hash from the raw token stored via the service
-        // Since we can't access the raw token directly, use the stored hash
-        var tokenHash = token.TokenHash;
-
-        // We need the raw token. Instead: use a valid token via direct repo method.
-        // Simulate: store the raw token hash as the lookup key (the service stores SHA256 hex of raw token).
-        // For testing, we add a token directly via the context.
-        var rawToken = "test-raw-token-confirm-12345";
-        var hashBytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken));
-        var directHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
-
-        var verToken = Core.Entities.EmailVerificationToken.Create(
-            userId, directHash, DateTime.UtcNow.AddHours(1));
-        _context.EmailVerificationTokens.Add(verToken);
-        await _context.SaveChangesAsync();
-
-        await _service.ConfirmEmailAsync(directHash);
+        await _service.ConfirmEmailAsync(rawToken);
 
         var credential = _context.UserCredentials.First(c => c.UserId == userId);
         credential.EmailConfirmed.Should().BeTrue();

@@ -131,8 +131,9 @@ internal sealed partial class CredentialService : ICredentialService
         await _eventPublisher.PublishAsync(new EmailVerificationRequestedEvent(userId, email, DateTime.UtcNow), ct);
     }
 
-    public async Task ConfirmEmailAsync(string tokenHash, CancellationToken ct = default)
+    public async Task ConfirmEmailAsync(string rawToken, CancellationToken ct = default)
     {
+        var tokenHash = ComputeTokenHash(rawToken);
         var token = await _emailTokenRepo.GetByHashAsync(tokenHash, ct);
 
         if (token is null || !token.IsValid)
@@ -242,8 +243,9 @@ internal sealed partial class CredentialService : ICredentialService
         await _eventPublisher.PublishAsync(new PasswordResetRequestedEvent(credential.UserId, DateTime.UtcNow), ct);
     }
 
-    public async Task ResetPasswordAsync(string tokenHash, string newPassword, string byIp, CancellationToken ct = default)
+    public async Task ResetPasswordAsync(string rawToken, string newPassword, string byIp, CancellationToken ct = default)
     {
+        var tokenHash = ComputeTokenHash(rawToken);
         var token = await _resetTokenRepo.GetByHashAsync(tokenHash, ct);
 
         if (token is null || !token.IsValid)
@@ -753,8 +755,9 @@ internal sealed partial class CredentialService : ICredentialService
         await _emailSender.SendEmailChangeNotificationAsync(credential.Email, ct);
     }
 
-    public async Task ConfirmEmailChangeAsync(string tokenHash, CancellationToken ct = default)
+    public async Task ConfirmEmailChangeAsync(string rawToken, CancellationToken ct = default)
     {
+        var tokenHash = ComputeTokenHash(rawToken);
         var token = await _emailChangeTokenRepo.GetByHashAsync(tokenHash, ct);
 
         if (token is null || !token.IsValid)
@@ -816,8 +819,9 @@ internal sealed partial class CredentialService : ICredentialService
     }
 
     public async Task<FirstFactorResult> VerifyMagicLinkAsync(
-        string tokenHash, string ipAddress, string userAgent, CancellationToken ct = default)
+        string rawToken, string ipAddress, string userAgent, CancellationToken ct = default)
     {
+        var tokenHash = ComputeTokenHash(rawToken);
         var token = await _magicLinkTokenRepo.GetByHashAsync(tokenHash, ct);
 
         if (token is null || !token.IsValid)

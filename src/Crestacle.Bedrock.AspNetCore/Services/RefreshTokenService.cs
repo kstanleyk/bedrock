@@ -7,6 +7,7 @@ using Crestacle.Bedrock.Core.Exceptions;
 using Crestacle.Bedrock.Core.Interfaces.Repositories;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Core.Options;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -26,6 +27,8 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
     private readonly IBedrockClaimsEnricher _enricher;
     private readonly IBedrockCache _cache;
     private readonly BedrockOptions _options;
+    private readonly IBedrockRealmProvider _realmProvider;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<RefreshTokenService> _logger;
 
     public RefreshTokenService(
@@ -39,6 +42,8 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
         IBedrockClaimsEnricher enricher,
         IBedrockCache cache,
         IOptions<BedrockOptions> options,
+        IBedrockRealmProvider realmProvider,
+        IHttpContextAccessor httpContextAccessor,
         ILogger<RefreshTokenService> logger)
     {
         _refreshTokenRepo = refreshTokenRepo;
@@ -51,7 +56,21 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
         _enricher = enricher;
         _cache = cache;
         _options = options.Value;
+        _realmProvider = realmProvider;
+        _httpContextAccessor = httpContextAccessor;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Realm-aware refresh-token TTL, same mechanism as <c>MfaPolicyService</c>'s own
+    /// realm-scoped reads -- resolved from the CURRENT request's <c>Host</c> header so a
+    /// shorter-TTL realm's server-side token record genuinely expires when its own
+    /// documented TTL says it should, not the base <c>BedrockOptions</c> value.
+    /// </summary>
+    private TimeSpan ResolveRefreshTokenExpiry()
+    {
+        var host = _httpContextAccessor.HttpContext?.Request.Host.Host;
+        return _realmProvider.Resolve(host)?.RefreshTokenExpiry ?? _options.Jwt.RefreshTokenExpiry;
     }
 
     public async Task<TokenPair> IssueAsync(
@@ -111,12 +130,12 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
 
             var refreshToken = RefreshToken.Create(
                 userId, refreshHash,
-                DateTime.UtcNow.Add(_options.Jwt.RefreshTokenExpiry), ip, tenantId);
+                DateTime.UtcNow.Add(ResolveRefreshTokenExpiry()), ip, tenantId);
             await _refreshTokenRepo.AddAsync(refreshToken, ct);
 
             var session = Session.Create(
                 userId, refreshHash, fingerprintHash, ip, userAgent,
-                DateTime.UtcNow.Add(_options.Jwt.RefreshTokenExpiry), tenantId,
+                DateTime.UtcNow.Add(ResolveRefreshTokenExpiry()), tenantId,
                 accessTokenJti: tokenDescriptor.Jti,
                 accessTokenExpiresAt: tokenDescriptor.ExpiresAt);
             await _sessionRepo.AddAsync(session, ct);
@@ -143,6 +162,24 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
         using var activity = BedrockTelemetry.ActivitySource.StartActivity("bedrock.token.refresh");
         var oldHash = _tokenService.HashToken(rawRefreshToken);
         var existing = await _refreshTokenRepo.GetByHashAsync(oldHash, ct);
+
+        // Reuse of an already-rotated token: RevokedAt is set (not merely expired) AND
+        // ReplacedByTokenHash is populated, meaning THIS SPECIFIC token was legitimately
+        // superseded by a real rotation before -- someone is presenting a token that was
+        // already exchanged for a newer one, the classic refresh-token-theft signal.
+        // Revoking just this one request would leave the CURRENT active token (the one
+        // the legitimate holder is still using) untouched, letting an attacker who stole
+        // an old token from a log/cache keep retrying it harmlessly forever while never
+        // actually compromising the live session -- the actual defense is revoking the
+        // whole rotation chain this token is the root of, invalidating the live token too,
+        // which forces the legitimate holder to notice (their next refresh fails) and
+        // re-authenticate.
+        if (existing is not null && !existing.IsActive && existing.ReplacedByTokenHash is not null)
+        {
+            await RevokeRotationChainAsync(existing, ip, ct);
+            LogReuseDetected(_logger, existing.UserId);
+            throw new BedrockValidationException("The refresh token is invalid or has expired.", BedrockErrorCodes.InvalidToken);
+        }
 
         if (existing is null || !existing.IsActive)
             throw new BedrockValidationException("The refresh token is invalid or has expired.", BedrockErrorCodes.InvalidToken);
@@ -174,7 +211,7 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
 
         var newToken = RefreshToken.Create(
             existing.UserId, newHash,
-            DateTime.UtcNow.Add(_options.Jwt.RefreshTokenExpiry), ip, existing.TenantId);
+            DateTime.UtcNow.Add(ResolveRefreshTokenExpiry()), ip, existing.TenantId);
         await _refreshTokenRepo.AddAsync(newToken, ct);
 
         session.UpdateActivity(newHash, tokenDescriptor.Jti, tokenDescriptor.ExpiresAt);
@@ -257,6 +294,49 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
                 await _cache.SetAsync(RevokedCacheKeyPrefix + session.AccessTokenJti, "1", ttl, ct);
         }
     }
+
+    /// <summary>
+    /// Walks the rotation chain forward from <paramref name="reusedToken"/> (an already-revoked
+    /// token whose own <see cref="RefreshToken.ReplacedByTokenHash"/> is set -- i.e. it was
+    /// legitimately rotated once already, and is now being presented again) via each successor's
+    /// own <see cref="RefreshToken.ReplacedByTokenHash"/>, revoking every still-active token and
+    /// its corresponding session found along the way, including the live tip of the chain. See
+    /// <see cref="RefreshAsync"/>'s own remarks for why this is the correct response to reuse,
+    /// not merely rejecting the reused token itself.
+    /// </summary>
+    private async Task RevokeRotationChainAsync(RefreshToken reusedToken, string ip, CancellationToken ct)
+    {
+        var currentHash = reusedToken.ReplacedByTokenHash;
+        while (currentHash is not null)
+        {
+            var successor = await _refreshTokenRepo.GetByHashAsync(currentHash, ct);
+            if (successor is null)
+                break;
+
+            if (successor.IsActive)
+            {
+                successor.Revoke(ip);
+                await _refreshTokenRepo.UpdateAsync(successor, ct);
+
+                var successorSession = await _sessionRepo.GetByTokenHashAsync(currentHash, ct);
+                if (successorSession is not null && successorSession.IsActive)
+                {
+                    successorSession.Revoke(ip);
+                    await _sessionRepo.UpdateAsync(successorSession, ct);
+                }
+            }
+
+            currentHash = successor.ReplacedByTokenHash;
+        }
+
+        await _auditRepo.AddAsync(
+            AuditEntry.Create(AuditEventType.AnomalyDetected, ip, "unknown", reusedToken.UserId,
+                tenantId: reusedToken.TenantId), ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
+
+    [LoggerMessage(2006, LogLevel.Warning, "Refresh token reuse detected -- rotation chain revoked: userId={UserId}")]
+    private static partial void LogReuseDetected(ILogger logger, Guid userId);
 
     [LoggerMessage(2001, LogLevel.Debug, "Token refreshed: userId={UserId} tenant={TenantId}")]
     private static partial void LogTokenRefreshed(ILogger logger, Guid userId, string? tenantId);

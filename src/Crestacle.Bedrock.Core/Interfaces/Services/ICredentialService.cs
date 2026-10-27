@@ -23,11 +23,11 @@ public interface ICredentialService
     /// <exception cref="BedrockValidationException">Thrown when the email is already registered or the password fails complexity validation.</exception>
     Task RegisterAsync(Guid userId, string email, string password, string? tenantId = null, CancellationToken ct = default);
 
-    /// <summary>Activates an email address using the verification token hash sent during registration.</summary>
-    /// <param name="tokenHash">The raw token value from the verification link (not pre-hashed).</param>
+    /// <summary>Activates an email address using the verification token sent during registration.</summary>
+    /// <param name="rawToken">The raw token value from the verification link (not pre-hashed).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <exception cref="BedrockValidationException">Thrown when the token is invalid, already used, or expired.</exception>
-    Task ConfirmEmailAsync(string tokenHash, CancellationToken ct = default);
+    Task ConfirmEmailAsync(string rawToken, CancellationToken ct = default);
 
     /// <summary>Re-sends the email verification message for an unconfirmed account.</summary>
     /// <param name="email">The email address of the unconfirmed account.</param>
@@ -51,10 +51,10 @@ public interface ICredentialService
     /// Confirms an email change using the token sent to the new address. Updates the credential
     /// email, marks the token used, and revokes all active sessions (email change is a security event).
     /// </summary>
-    /// <param name="tokenHash">The raw token value from the confirmation link (not pre-hashed).</param>
+    /// <param name="rawToken">The raw token value from the confirmation link (not pre-hashed).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <exception cref="BedrockValidationException">Thrown when the token is invalid, expired, or the new email was claimed by another user.</exception>
-    Task ConfirmEmailChangeAsync(string tokenHash, CancellationToken ct = default);
+    Task ConfirmEmailChangeAsync(string rawToken, CancellationToken ct = default);
 
     // -------------------------------------------------------------------------
     // Password management
@@ -75,13 +75,13 @@ public interface ICredentialService
     /// <param name="ct">Cancellation token.</param>
     Task RequestPasswordResetAsync(string email, CancellationToken ct = default);
 
-    /// <summary>Completes a password reset using the token hash from the reset email and revokes all active sessions.</summary>
-    /// <param name="tokenHash">The raw token value from the password-reset link (not pre-hashed).</param>
+    /// <summary>Completes a password reset using the token from the reset email and revokes all active sessions.</summary>
+    /// <param name="rawToken">The raw token value from the password-reset link (not pre-hashed).</param>
     /// <param name="newPassword">The new plaintext password; validated before being hashed and stored.</param>
     /// <param name="byIp">The IP address of the request, recorded in the audit log.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <exception cref="BedrockValidationException">Thrown when the token is invalid, expired, or the new password fails validation.</exception>
-    Task ResetPasswordAsync(string tokenHash, string newPassword, string byIp, CancellationToken ct = default);
+    Task ResetPasswordAsync(string rawToken, string newPassword, string byIp, CancellationToken ct = default);
 
     // -------------------------------------------------------------------------
     // Login
@@ -174,12 +174,12 @@ public interface ICredentialService
     /// Authenticates a user via a magic-link token. Returns the same <see cref="FirstFactorResult"/>
     /// as <see cref="LoginFirstFactorAsync"/>: full success, MFA challenge, mandatory-MFA enrollment, or failure.
     /// </summary>
-    /// <param name="tokenHash">The token hash from the magic-link URL.</param>
+    /// <param name="rawToken">The raw token value from the magic-link URL (not pre-hashed).</param>
     /// <param name="ipAddress">The client IP address for audit logging.</param>
     /// <param name="userAgent">The client User-Agent for audit logging.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A <see cref="FirstFactorResult"/> indicating the outcome and any required next step.</returns>
-    Task<FirstFactorResult> VerifyMagicLinkAsync(string tokenHash, string ipAddress, string userAgent, CancellationToken ct = default);
+    Task<FirstFactorResult> VerifyMagicLinkAsync(string rawToken, string ipAddress, string userAgent, CancellationToken ct = default);
 
     // -------------------------------------------------------------------------
     // Account erasure

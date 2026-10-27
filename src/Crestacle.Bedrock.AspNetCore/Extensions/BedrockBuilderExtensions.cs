@@ -149,6 +149,27 @@ public static class BedrockBuilderExtensions
     }
 
     /// <summary>
+    /// Replaces the default single-realm <see cref="IBedrockRealmProvider"/> with
+    /// <typeparamref name="T"/>, opting this deployment into multi-realm hosting: realm-scoped
+    /// overrides (MFA grace period, refresh-cookie name, refresh-token TTL, frontend base URL)
+    /// resolved per request from the <c>Host</c> header, sharing ONE signing key/JWKS.
+    /// </summary>
+    /// <typeparam name="T">The concrete realm provider to register as singleton.</typeparam>
+    /// <param name="builder">The Bedrock builder.</param>
+    /// <returns>The same builder instance for chaining.</returns>
+    public static IBedrockBuilder WithRealmProvider<T>(this IBedrockBuilder builder)
+        where T : class, IBedrockRealmProvider
+    {
+        var descriptor = builder.Services.FirstOrDefault(
+            d => d.ServiceType == typeof(IBedrockRealmProvider));
+        if (descriptor is not null)
+            builder.Services.Remove(descriptor);
+
+        builder.Services.AddSingleton<IBedrockRealmProvider, T>();
+        return builder;
+    }
+
+    /// <summary>
     /// Replaces the default <see cref="IBedrockTokenIssuer"/> with a custom implementation, enabling
     /// an external IDP (e.g. OpenIddict) to sign access tokens instead of Bedrock's built-in JWT service.
     /// </summary>
