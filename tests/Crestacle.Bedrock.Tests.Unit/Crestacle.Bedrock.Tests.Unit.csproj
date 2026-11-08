@@ -8,6 +8,7 @@
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.Core\Crestacle.Bedrock.Core.csproj" />
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.AspNetCore\Crestacle.Bedrock.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.HaveIBeenPwned\Crestacle.Bedrock.HaveIBeenPwned.csproj" />
+    <ProjectReference Include="..\..\src\Crestacle.Bedrock.HardwareTokenSeedImport\Crestacle.Bedrock.HardwareTokenSeedImport.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">

@@ -122,7 +122,7 @@ public sealed class HardeningTests : IDisposable
             resp.StatusCode.Should().Be(HttpStatusCode.OK);
             var body = await ReadAsync<BedrockResponse<TokenResponse>>(resp);
             body.Data!.RefreshToken.Should().NotBeNullOrEmpty();
-            tokens.Add(body.Data.RefreshToken);
+            tokens.Add(body.Data.RefreshToken!);
         }
 
         tokens.Should().OnlyHaveUniqueItems();
@@ -175,7 +175,7 @@ public sealed class HardeningTests : IDisposable
                 because: $"token {i} should still be valid (only the oldest is evicted)");
             // Consume the new token to avoid interference with subsequent iterations
             var body = await ReadAsync<BedrockResponse<TokenResponse>>(resp);
-            refreshTokens[i] = body.Data!.RefreshToken;
+            refreshTokens[i] = body.Data!.RefreshToken!;
         }
     }
 
