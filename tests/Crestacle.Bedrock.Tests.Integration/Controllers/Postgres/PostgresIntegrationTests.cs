@@ -174,7 +174,7 @@ public sealed class PostgresIntegrationTests : IDisposable
             resp.StatusCode.Should().Be(HttpStatusCode.OK,
                 because: $"token {i} should still be valid");
             var body = await ReadAsync<BedrockResponse<TokenResponse>>(resp);
-            refreshTokens[i] = body.Data!.RefreshToken;
+            refreshTokens[i] = body.Data!.RefreshToken!;
         }
     }
 

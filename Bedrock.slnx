@@ -10,6 +10,7 @@
     <Project Path="src/Crestacle.Bedrock.AspNetCore/Crestacle.Bedrock.AspNetCore.csproj" />
     <Project Path="src/Crestacle.Bedrock.HaveIBeenPwned/Crestacle.Bedrock.HaveIBeenPwned.csproj" />
     <Project Path="src/Crestacle.Bedrock.Redis/Crestacle.Bedrock.Redis.csproj" />
+    <Project Path="src/Crestacle.Bedrock.HardwareTokenSeedImport/Crestacle.Bedrock.HardwareTokenSeedImport.csproj" />
     <Project Path="src/Crestacle.Sentinel.Core/Crestacle.Sentinel.Core.csproj" />
     <Project Path="src/Crestacle.Sentinel.EntityFramework/Crestacle.Sentinel.EntityFramework.csproj" />
     <Project Path="src/Crestacle.Sentinel.AspNetCore/Crestacle.Sentinel.AspNetCore.csproj" />

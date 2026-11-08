@@ -1,4 +1,6 @@
 <Project>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
   <!-- Samples are not library packages — relax library-level strictness. -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>

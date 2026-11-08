@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>Crestacle.Bedrock.HardwareTokenSeedImport</PackageId>
+    <Description>Vendor-neutral parsing of OATH HOTP/TOTP hardware token seed-file exports into a normalized credential shape, for self-hosted MFA enrollment with Crestacle.Bedrock.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
