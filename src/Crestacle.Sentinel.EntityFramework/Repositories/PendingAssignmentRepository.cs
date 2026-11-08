@@ -102,15 +102,30 @@ internal sealed class PendingAssignmentRepository(
             actor.IpAddress,
             actor.UserAgent));
 
+        // Explicit transaction boundary: the PendingAssignment status change and the
+        // new UserRole are two separate aggregates and must commit or roll back together.
+        // The in-memory provider (used in unit tests) doesn't support real transactions,
+        // so skip wrapping there — a single SaveChangesAsync is already atomic on it.
+        var useTransaction = context.Database.IsRelational();
+        var transaction = useTransaction ? await context.Database.BeginTransactionAsync(ct) : null;
         try
         {
             await context.SaveChangesAsync(ct);
+            if (transaction is not null)
+                await transaction.CommitAsync(ct);
         }
         catch (DbUpdateConcurrencyException)
         {
             // Another approver saved first — our RowVersion is stale.
+            if (transaction is not null)
+                await transaction.RollbackAsync(ct);
             logger.LogWarning("Concurrency conflict approving pending assignment {Id} — another approver saved first.", id);
             return false;
+        }
+        finally
+        {
+            if (transaction is not null)
+                await transaction.DisposeAsync();
         }
 
         logger.LogInformation("Pending assignment {Id} approved by {Reviewer}.", id, reviewer);
