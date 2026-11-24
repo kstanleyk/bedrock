@@ -39,7 +39,12 @@ public sealed class EmailChangeTests : IDisposable
         const string newEmail = "email-change-to@example.com";
 
         await RegisterAndActivateAsync(oldEmail);
-        var tokens = await LoginAsync(oldEmail);
+        var loginResponse = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(oldEmail, ValidPassword));
+        var refreshCookie = loginResponse.GetRefreshCookieValue();
+        refreshCookie.Should().NotBeNullOrEmpty();
+        var tokens = (await ReadBedrockResponseAsync<LoginResponse>(loginResponse)).Data!;
 
         _client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokens.AccessToken);
@@ -69,9 +74,11 @@ public sealed class EmailChangeTests : IDisposable
         updated.Email.Should().Be(newEmail);
 
         // Assert old refresh token is revoked — refresh should now fail
+        _client.SetRefreshCookie(refreshCookie);
         var refreshResponse = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/refresh",
-            new RefreshRequest(tokens.RefreshToken!));
+            new RefreshRequest());
+        _client.SetRefreshCookie(null);
         refreshResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 

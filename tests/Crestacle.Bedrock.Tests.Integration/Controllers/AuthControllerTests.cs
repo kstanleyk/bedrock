@@ -118,7 +118,11 @@ public sealed class AuthControllerTests : IDisposable
         var body = await ReadBedrockResponseAsync<LoginResponse>(response);
         body.Success.Should().BeTrue();
         body.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        body.Data.RefreshToken.Should().NotBeNullOrEmpty();
+
+        // Since the HttpOnly-cookie hardening, the refresh token is never present in the JSON
+        // body — only in a Set-Cookie header — so the real contract to assert is the opposite.
+        body.Data.RefreshToken.Should().BeNull();
+        response.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
     }
 
     [Fact]
@@ -180,16 +184,28 @@ public sealed class AuthControllerTests : IDisposable
     {
         var email = "ctrl-refresh@example.com";
         await RegisterAndActivateAsync(email);
-        var tokens = await LoginAsync(email);
 
+        var loginResponse = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, ValidPassword));
+        var refreshCookie = loginResponse.GetRefreshCookieValue();
+        refreshCookie.Should().NotBeNullOrEmpty();
+
+        _client.SetRefreshCookie(refreshCookie);
         var response = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/refresh",
-            new RefreshRequest(tokens.RefreshToken!));
+            new RefreshRequest());
+        _client.SetRefreshCookie(null);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadBedrockResponseAsync<TokenResponse>(response);
         body.Success.Should().BeTrue();
         body.Data!.AccessToken.Should().NotBeNullOrEmpty();
+
+        // The refresh cookie must rotate to a genuinely new value, not be reissued unchanged.
+        var rotatedCookie = response.GetRefreshCookieValue();
+        rotatedCookie.Should().NotBeNullOrEmpty();
+        rotatedCookie.Should().NotBe(refreshCookie);
     }
 
     [Fact]

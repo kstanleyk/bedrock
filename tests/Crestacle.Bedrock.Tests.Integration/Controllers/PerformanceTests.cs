@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
-using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Interfaces;
@@ -18,8 +17,6 @@ namespace Crestacle.Bedrock.Tests.Integration.Controllers;
 /// </summary>
 public sealed class PerformanceTests : IDisposable
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
     private readonly CapturingEmailSender _emailSender = new();
@@ -55,32 +52,26 @@ public sealed class PerformanceTests : IDisposable
         var loginResp = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/login",
             new LoginRequest(Email, Password));
-        var loginBody = await loginResp.Content
-            .ReadFromJsonAsync<BedrockResponse<LoginResponse>>(JsonOptions);
-        var refreshToken = loginBody!.Data!.RefreshToken!;
+        var refreshToken = loginResp.GetRefreshCookieValue();
+        refreshToken.Should().NotBeNullOrEmpty();
 
         const int iterations = 10;
 
         // Warm-up: absorb JIT, EF Core model compilation, and first-call SQLite page cache priming.
-        var warmupResp = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/refresh",
-            new RefreshRequest(refreshToken));
-        var warmupBody = await warmupResp.Content
-            .ReadFromJsonAsync<BedrockResponse<TokenResponse>>(JsonOptions);
-        refreshToken = warmupBody!.Data!.RefreshToken;
+        _client.SetRefreshCookie(refreshToken);
+        var warmupResp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        refreshToken = warmupResp.GetRefreshCookieValue();
 
         // Timed loop — each iteration rotates the token so the DB state is realistic
         var sw = Stopwatch.StartNew();
         for (var i = 0; i < iterations; i++)
         {
-            var resp = await _client.PostAsJsonAsync(
-                "/api/bedrock/auth/refresh",
-                new RefreshRequest(refreshToken));
-            var body = await resp.Content
-                .ReadFromJsonAsync<BedrockResponse<TokenResponse>>(JsonOptions);
-            refreshToken = body!.Data!.RefreshToken;
+            _client.SetRefreshCookie(refreshToken);
+            var resp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+            refreshToken = resp.GetRefreshCookieValue();
         }
         sw.Stop();
+        _client.SetRefreshCookie(null);
 
         var avgMs = sw.Elapsed.TotalMilliseconds / iterations;
         avgMs.Should().BeLessThan(ThresholdMs,

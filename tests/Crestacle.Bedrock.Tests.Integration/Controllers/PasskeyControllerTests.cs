@@ -132,7 +132,10 @@ public sealed class PasskeyControllerTests : IDisposable
         authResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadAsync<LoginResponse>(authResponse);
         body.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        body.Data.RefreshToken.Should().NotBeNullOrEmpty();
+
+        // HttpOnly-cookie hardening: the refresh token is never in the JSON body.
+        body.Data.RefreshToken.Should().BeNull();
+        authResponse.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
     }
 
     // -------------------------------------------------------------------------

@@ -73,8 +73,11 @@ public sealed class InvitationTests : IDisposable
         var body = await ReadBedrockResponseAsync<LoginResponse>(acceptResponse);
         body.Data.Should().NotBeNull();
         body.Data!.AccessToken.Should().NotBeNullOrWhiteSpace();
-        body.Data!.RefreshToken.Should().NotBeNullOrWhiteSpace();
         body.Data!.AccessTokenExpiresAt.Should().BeAfter(DateTime.UtcNow);
+
+        // HttpOnly-cookie hardening: the refresh token is never in the JSON body.
+        body.Data!.RefreshToken.Should().BeNull();
+        acceptResponse.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
     }
 
     [Fact]

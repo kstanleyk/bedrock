@@ -56,15 +56,16 @@ public sealed class HardeningTests : IDisposable
             new ConfirmEmailRequest(rawToken));
         confirm.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Login → get access + refresh tokens
+        // Login → get access token (body) + refresh token (HttpOnly cookie only)
         var loginResp = await _client.PostAsJsonAsync(
             "/api/bedrock/auth/login",
             new LoginRequest(email, ValidPassword));
         loginResp.StatusCode.Should().Be(HttpStatusCode.OK);
         var loginBody = await ReadAsync<BedrockResponse<LoginResponse>>(loginResp);
         loginBody.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        loginBody.Data.RefreshToken.Should().NotBeNullOrEmpty();
-        var refresh1 = loginBody.Data.RefreshToken!;
+        loginBody.Data.RefreshToken.Should().BeNull();
+        var refresh1 = loginResp.GetRefreshCookieValue();
+        refresh1.Should().NotBeNullOrEmpty();
 
         // Use access token to access a protected endpoint
         _client.DefaultRequestHeaders.Authorization =
@@ -73,31 +74,30 @@ public sealed class HardeningTests : IDisposable
         sessions.StatusCode.Should().Be(HttpStatusCode.OK);
         _client.DefaultRequestHeaders.Authorization = null;
 
-        // Refresh → get new token pair
-        var refreshResp = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/refresh",
-            new RefreshRequest(refresh1));
+        // Refresh → get new token pair; the cookie must rotate to a new value
+        _client.SetRefreshCookie(refresh1);
+        var refreshResp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
         refreshResp.StatusCode.Should().Be(HttpStatusCode.OK);
         var refreshBody = await ReadAsync<BedrockResponse<TokenResponse>>(refreshResp);
         refreshBody.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        var refresh2 = refreshBody.Data.RefreshToken;
+        var refresh2 = refreshResp.GetRefreshCookieValue();
+        refresh2.Should().NotBeNullOrEmpty();
+        refresh2.Should().NotBe(refresh1);
 
         // Old refresh token must be rejected (rotated)
-        var oldRefreshResp = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/refresh",
-            new RefreshRequest(refresh1));
+        _client.SetRefreshCookie(refresh1);
+        var oldRefreshResp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
         oldRefreshResp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         // Revoke the new token
-        var revokeResp = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/revoke",
-            new RevokeRequest(refresh2));
+        _client.SetRefreshCookie(refresh2);
+        var revokeResp = await _client.PostAsJsonAsync("/api/bedrock/auth/revoke", new RevokeRequest());
         revokeResp.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // Revoked token must be rejected
-        var revokedRefreshResp = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/refresh",
-            new RefreshRequest(refresh2));
+        _client.SetRefreshCookie(refresh2);
+        var revokedRefreshResp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        _client.SetRefreshCookie(null);
         revokedRefreshResp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -109,32 +109,37 @@ public sealed class HardeningTests : IDisposable
     public async Task RefreshRotationChain_ThreeRotations_EachGeneratesUniqueToken()
     {
         var email = "rotation-chain@example.com";
-        var initialTokens = await RegisterActivateAndLoginAsync(email);
+        await RegisterAndActivateAsync(email);
+        var loginResp = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, ValidPassword));
+        var initialCookie = loginResp.GetRefreshCookieValue();
+        initialCookie.Should().NotBeNullOrEmpty();
 
-        var tokens = new List<string> { initialTokens.RefreshToken! };
+        var tokens = new List<string> { initialCookie! };
 
         // Rotate 3 times; each must succeed and produce a distinct refresh token
         for (var i = 0; i < 3; i++)
         {
-            var resp = await _client.PostAsJsonAsync(
-                "/api/bedrock/auth/refresh",
-                new RefreshRequest(tokens[^1]));
+            _client.SetRefreshCookie(tokens[^1]);
+            var resp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
             resp.StatusCode.Should().Be(HttpStatusCode.OK);
-            var body = await ReadAsync<BedrockResponse<TokenResponse>>(resp);
-            body.Data!.RefreshToken.Should().NotBeNullOrEmpty();
-            tokens.Add(body.Data.RefreshToken!);
+            var rotated = resp.GetRefreshCookieValue();
+            rotated.Should().NotBeNullOrEmpty();
+            tokens.Add(rotated!);
         }
+        _client.SetRefreshCookie(null);
 
         tokens.Should().OnlyHaveUniqueItems();
 
         // All previous tokens must be rejected
         foreach (var stale in tokens.SkipLast(1))
         {
-            var reject = await _client.PostAsJsonAsync(
-                "/api/bedrock/auth/refresh",
-                new RefreshRequest(stale));
+            _client.SetRefreshCookie(stale);
+            var reject = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
             reject.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         }
+        _client.SetRefreshCookie(null);
     }
 
     // -------------------------------------------------------------------------
@@ -154,29 +159,30 @@ public sealed class HardeningTests : IDisposable
             var resp = await _client.PostAsJsonAsync(
                 "/api/bedrock/auth/login",
                 new LoginRequest(email, ValidPassword));
-            var body = await ReadAsync<BedrockResponse<LoginResponse>>(resp);
-            refreshTokens.Add(body.Data!.RefreshToken!);
+            var cookie = resp.GetRefreshCookieValue();
+            cookie.Should().NotBeNullOrEmpty();
+            refreshTokens.Add(cookie!);
         }
 
         // Only 3 sessions should be active; the first (oldest) should have been evicted
-        var firstTokenResp = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/refresh",
-            new RefreshRequest(refreshTokens[0]));
+        _client.SetRefreshCookie(refreshTokens[0]);
+        var firstTokenResp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
         firstTokenResp.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             because: "the oldest session should have been evicted when the 4th session was created");
 
         // The latest 3 tokens should still be valid
         for (var i = 1; i <= 3; i++)
         {
-            var resp = await _client.PostAsJsonAsync(
-                "/api/bedrock/auth/refresh",
-                new RefreshRequest(refreshTokens[i]));
+            _client.SetRefreshCookie(refreshTokens[i]);
+            var resp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
             resp.StatusCode.Should().Be(HttpStatusCode.OK,
                 because: $"token {i} should still be valid (only the oldest is evicted)");
             // Consume the new token to avoid interference with subsequent iterations
-            var body = await ReadAsync<BedrockResponse<TokenResponse>>(resp);
-            refreshTokens[i] = body.Data!.RefreshToken!;
+            var rotated = resp.GetRefreshCookieValue();
+            rotated.Should().NotBeNullOrEmpty();
+            refreshTokens[i] = rotated!;
         }
+        _client.SetRefreshCookie(null);
     }
 
     // -------------------------------------------------------------------------

@@ -65,7 +65,10 @@ public sealed class ExternalLoginTests : IDisposable
         var body = await ReadBedrockResponseAsync<LoginResponse>(response);
         body.Success.Should().BeTrue();
         body.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        body.Data.RefreshToken.Should().NotBeNullOrEmpty();
+
+        // HttpOnly-cookie hardening: the refresh token is never in the JSON body.
+        body.Data.RefreshToken.Should().BeNull();
+        response.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
     }
 
     [Fact]
@@ -268,7 +271,10 @@ public sealed class ExternalLoginTests : IDisposable
         loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadBedrockResponseAsync<LoginResponse>(loginResponse);
         body.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        body.Data.RefreshToken.Should().NotBeNullOrEmpty();
+
+        // HttpOnly-cookie hardening: the refresh token is never in the JSON body.
+        body.Data.RefreshToken.Should().BeNull();
+        loginResponse.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
     }
 
     // -------------------------------------------------------------------------
