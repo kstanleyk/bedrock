@@ -10,6 +10,15 @@ public interface IUserRepository
     /// <summary>Returns a single user with their active roles, or null if not found.</summary>
     Task<UserDto?> GetByIdAsync(Guid userId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Returns a single user with their active roles, looked up by the external
+    /// <c>IdentityId</c> (e.g. the consuming application's own user id, as a string) rather
+    /// than Sentinel's internal primary key -- the two are architecturally distinct Guids.
+    /// Callers that only have the external identity (e.g. a claims enricher called with the
+    /// host application's own user id) must use this, not <see cref="GetByIdAsync"/>.
+    /// </summary>
+    Task<UserDto?> GetByIdentityIdAsync(string identityId, CancellationToken ct = default);
+
     /// <summary>Returns the external IdentityId for the given internal user ID, or null if not found.</summary>
     Task<string?> GetIdentityIdAsync(Guid userId, CancellationToken ct = default);
 

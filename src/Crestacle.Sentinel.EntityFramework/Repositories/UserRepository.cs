@@ -75,6 +75,28 @@ internal sealed class UserRepository(
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<UserDto?> GetByIdentityIdAsync(string identityId, CancellationToken ct = default)
+    {
+        var tenantId = tenantContext.TenantId;
+
+        return await context.Users
+            .AsNoTracking()
+            .Where(u => u.IdentityId == identityId && (tenantId == null || u.TenantId == tenantId))
+            .Select(u => new UserDto(
+                u.Id,
+                u.IdentityId,
+                u.Email,
+                u.FullName,
+                u.Phone,
+                u.UserRoles
+                    .Where(ur => ur.RemovedOn == null
+                              && (ur.ExpiresOn == null || ur.ExpiresOn > DateTime.UtcNow)
+                              && (tenantId    == null  || ur.TenantId  == tenantId))
+                    .Select(ur => new RoleSummaryDto(
+                        ur.Role.Id, ur.Role.Name, ur.Role.DisplayName, ur.Role.Type.ToString(), ur.ExpiresOn))))
+            .FirstOrDefaultAsync(ct);
+    }
+
     public async Task<string?> GetIdentityIdAsync(Guid userId, CancellationToken ct = default)
         => await context.Users
             .Where(u => u.Id == userId)

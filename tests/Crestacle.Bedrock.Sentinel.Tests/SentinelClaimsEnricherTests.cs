@@ -33,14 +33,14 @@ public sealed class SentinelClaimsEnricherTests
         var repo  = Substitute.For<IUserRepository>();
         var roles = roleNames.Select(n => new RoleSummaryDto(Guid.NewGuid(), n, n, "Standard", null));
         var dto   = new UserDto(UserId, "identity-id", "user@example.com", fullName, null, roles);
-        repo.GetByIdAsync(UserId, Arg.Any<CancellationToken>()).Returns(dto);
+        repo.GetByIdentityIdAsync(UserId.ToString(), Arg.Any<CancellationToken>()).Returns(dto);
         return repo;
     }
 
     private static IUserRepository NullUser()
     {
         var repo = Substitute.For<IUserRepository>();
-        repo.GetByIdAsync(UserId, Arg.Any<CancellationToken>()).Returns((UserDto?)null);
+        repo.GetByIdentityIdAsync(UserId.ToString(), Arg.Any<CancellationToken>()).Returns((UserDto?)null);
         return repo;
     }
 
@@ -126,6 +126,36 @@ public sealed class SentinelClaimsEnricherTests
         var claims   = await enricher.EnrichAsync(UserId);
 
         claims.Keys.Should().BeEquivalentTo(new[] { "name", "mfa_enabled" });
+    }
+
+    [Fact]
+    public async Task EnrichAsync_LooksUpTheUserByIdentityId_NotBySentinelsInternalId()
+    {
+        // userId here is Bedrock's own internal id; Sentinel's User.Id is a SEPARATE,
+        // independently generated Guid -- modeled here as sentinelInternalId, deliberately
+        // different from UserId, exactly like a real deployment. GetByIdAsync (keyed on
+        // Sentinel's internal id) is mocked to return the real user ONLY for that different
+        // Guid, never for UserId -- so a correct EnrichAsync, which only has Bedrock's UserId
+        // to work with, can only find this user via GetByIdentityIdAsync(UserId.ToString()).
+        var sentinelInternalId = Guid.NewGuid();
+        var repo = Substitute.For<IUserRepository>();
+        var dto = new UserDto(sentinelInternalId, UserId.ToString(), "user@example.com", "Real Name", null, []);
+        repo.GetByIdAsync(sentinelInternalId, Arg.Any<CancellationToken>()).Returns(dto);
+        repo.GetByIdentityIdAsync(UserId.ToString(), Arg.Any<CancellationToken>()).Returns(dto);
+        // repo.GetByIdAsync(UserId, ...) intentionally left unconfigured -> NSubstitute default:
+        // null -- the wrong lookup (what the pre-fix code called) must find nothing.
+
+        var enricher = BuildEnricher(NoPermissions(), repo, CredentialWithMfa(false));
+        var claims = await enricher.EnrichAsync(UserId);
+
+        claims["name"].Should().Be("Real Name",
+            "EnrichAsync must call GetByIdentityIdAsync(userId.ToString()), not " +
+            "GetByIdAsync(userId) -- Sentinel's internal User.Id is architecturally distinct " +
+            "from Bedrock's own user id, so the wrong-method lookup can never find this user " +
+            "in a real deployment either");
+
+        await repo.Received(1).GetByIdentityIdAsync(UserId.ToString(), Arg.Any<CancellationToken>());
+        await repo.DidNotReceive().GetByIdAsync(UserId, Arg.Any<CancellationToken>());
     }
 
     [Fact]
