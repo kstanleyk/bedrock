@@ -37,7 +37,7 @@ public sealed class PostgresSchemaTests : IDisposable
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE lower(table_schema) = 'bedrock'
+                WHERE lower(table_schema) = 'auth'
                   AND table_name          = 'user_credentials'
                 """)
             .ToListAsync();
@@ -59,7 +59,7 @@ public sealed class PostgresSchemaTests : IDisposable
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE lower(table_schema) = 'bedrock'
+                WHERE lower(table_schema) = 'auth'
                   AND table_name          = 'audit_log'
                 """)
             .ToListAsync();
@@ -137,7 +137,7 @@ public sealed class PostgresSchemaTests : IDisposable
 
         // SqlQuery<string> expects EF Core's primitive-scalar convention: column alias "Value".
         var raw = await _db.Database
-            .SqlQuery<string>($"SELECT event_type::text AS \"Value\" FROM \"Bedrock\".audit_log WHERE id = {entry.Id}")
+            .SqlQuery<string>($"SELECT event_type::text AS \"Value\" FROM auth.audit_log WHERE id = {entry.Id}")
             .FirstAsync();
 
         raw.Should().Be("LoginSucceeded",
@@ -154,7 +154,7 @@ public sealed class PostgresSchemaTests : IDisposable
         await _db.SaveChangesAsync();
 
         var raw = await _db.Database
-            .SqlQuery<string>($"SELECT status::text AS \"Value\" FROM \"Bedrock\".user_credentials WHERE id = {credential.Id}")
+            .SqlQuery<string>($"SELECT status::text AS \"Value\" FROM auth.user_credentials WHERE id = {credential.Id}")
             .FirstAsync();
 
         raw.Should().Be("PendingVerification",

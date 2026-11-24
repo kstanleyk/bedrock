@@ -41,13 +41,16 @@ internal sealed class SessionRepository : ISessionRepository
             return;
         }
 
-        // Same fix as CredentialRepository.UpdateAsync (this class's own sibling) --
+        // Same fix as CredentialRepository.UpdateAsync (this class's own sibling, see its
+        // longer comment for the full explanation, including the per-provider concurrency
+        // token: SQL Server's RowVersion vs. PostgreSQL's real xmin system column, auto-
+        // detected in BedrockContext.OnModelCreating -- docs/quality-roadmap.md D5, fixed) --
         // GetByIdAsync/GetByTokenHashAsync both read AsNoTracking, so a blanket
-        // `_context.Sessions.Update(session)` attach on a genuinely fresh scope loses
-        // the row's real xmin concurrency token, making the concurrency check always
-        // compare against the CLR default (0) and always report "0 rows affected." A
-        // tracked stub loaded by primary key first captures the real xmin before
-        // CurrentValues.SetValues overlays the caller's own field values onto it.
+        // `_context.Sessions.Update(session)` attach on a genuinely fresh scope would compare
+        // the concurrency token against a stale/default value and always report "0 rows
+        // affected." A tracked stub loaded by primary key first captures the real, current
+        // token value before CurrentValues.SetValues overlays the caller's own field values
+        // onto it.
         var trackedStub = await _context.Sessions.FindAsync([session.Id], ct)
             ?? throw new InvalidOperationException($"Session {session.Id} not found for update.");
         _context.Entry(trackedStub).CurrentValues.SetValues(session);

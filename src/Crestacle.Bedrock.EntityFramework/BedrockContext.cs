@@ -47,6 +47,44 @@ public class BedrockContext : DbContext
 
         ApplyUtcConverters(modelBuilder);
         ApplyTenantFilters(modelBuilder);
+
+        // UserCredentialConfiguration/SessionConfiguration's IsRowVersion() is a genuine,
+        // DB-enforced optimistic-concurrency token only on SQL Server, where the native
+        // rowversion/timestamp column type auto-increments on every write. PostgreSQL has no
+        // equivalent for a plain byte[] column -- nothing in the database ever changes its
+        // value, so the "concurrency check" would be a silent no-op there (see
+        // docs/quality-roadmap.md D5). Auto-detected (not an opt-in extension method a consumer
+        // has to remember to call) so this can never silently regress to the no-op state the
+        // way Crestacle.Sentinel.EntityFramework's equivalent UseSentinelPostgreSqlConcurrency()
+        // did -- that one has zero callers anywhere in this solution.
+        // Checked by provider name string, not Database.IsNpgsql() -- that extension method
+        // lives in the Npgsql.EntityFrameworkCore.PostgreSQL package, and this project
+        // deliberately has no package reference to any specific EF Core provider (a SQL-Server-
+        // or SQLite-only consumer shouldn't have to pull in Npgsql transitively).
+        if (Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            UseNpgsqlXminConcurrency(modelBuilder);
+    }
+
+    private static void UseNpgsqlXminConcurrency(ModelBuilder modelBuilder)
+    {
+        // xmin is a PostgreSQL system column (type xid = uint) that increments on every row
+        // update -- mapping it as a shadow concurrency token is the real, DB-enforced
+        // equivalent of SQL Server's IsRowVersion().
+        foreach (var entityType in new[] { typeof(UserCredential), typeof(Session) })
+        {
+            modelBuilder.Entity(entityType)
+                .Property<uint>("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
+
+            // Without this, IsRowVersion() from the default configuration still generates a
+            // `row_version bytea NOT NULL` column -- but PostgreSQL has no mechanism to
+            // auto-populate it on INSERT, which would be a null-constraint violation on every
+            // insert. xmin handles concurrency natively; the bytea column is redundant and
+            // harmful once xmin is in play.
+            modelBuilder.Entity(entityType).Ignore(nameof(UserCredential.RowVersion));
+        }
     }
 
     private static void ApplyUtcConverters(ModelBuilder modelBuilder)
