@@ -124,6 +124,57 @@ public sealed class StepUpControllerTests : IDisposable
     }
 
     // -------------------------------------------------------------------------
+    // BedrockPolicyNames.Default must reject short-lived token types replayed as a
+    // normal bearer token — a captured MFA-challenge or step-up token must never grant
+    // access to a standard business endpoint the way a real access token does.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task CapturedMfaChallengeToken_ReplayedAsBearerToken_Returns403OnDefaultPolicyEndpoint()
+    {
+        var email = "stepup-challenge-replay@example.com";
+        await RegisterAndActivateAsync(email);
+
+        var credential = _server.DbContext.UserCredentials.First(c => c.Email == email);
+        credential.EnableMfa(MfaMethod.EmailOtp);
+        await _server.DbContext.SaveChangesAsync();
+
+        var loginResp = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, ValidPassword));
+        var loginBody = await ReadAsync<BedrockResponse<LoginResponse>>(loginResp);
+        var challengeToken = loginBody.Data!.ChallengeToken!;
+
+        // The challenge token is only ever meant to be exchanged via POST /auth/verify-2fa's
+        // request body (an [AllowAnonymous] endpoint) — never presented as Authorization: Bearer.
+        SetBearer(challengeToken);
+        var response = await _client.GetAsync("/api/bedrock/sessions");
+        SetBearer(null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "a captured MFA-challenge token must never be usable as a normal bearer token — it has no token_type == \"access\" claim");
+    }
+
+    [Fact]
+    public async Task CapturedStepUpToken_ReplayedAsBearerToken_Returns403OnDefaultPolicyEndpoint()
+    {
+        var email = "stepup-steptoken-replay@example.com";
+        var tokens = await RegisterActivateEnableMfaAndLoginAsync(email);
+        SetBearer(tokens.AccessToken);
+
+        var stepUpToken = await GetStepUpTokenAsync();
+
+        // The step-up token is only ever meant to be presented via the X-Step-Up-Token header
+        // on [RequiresStepUp] endpoints — never as Authorization: Bearer.
+        SetBearer(stepUpToken);
+        var response = await _client.GetAsync("/api/bedrock/sessions");
+        SetBearer(null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "a captured step-up token must never be usable as a normal bearer token — it has no token_type == \"access\" claim");
+    }
+
+    // -------------------------------------------------------------------------
     // [RequiresStepUp] enforcement — tested via DELETE /api/bedrock/2fa
     // -------------------------------------------------------------------------
 

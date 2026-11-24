@@ -169,8 +169,7 @@ public static class BedrockAspNetCoreServiceCollectionExtensions
         {
             authOpts.AddPolicy(BedrockPolicyNames.Default, p => p
                 .RequireAuthenticatedUser()
-                .RequireAssertion(ctx =>
-                    ctx.User.FindFirstValue("token_type") != "enrollment"));
+                .RequireAssertion(ctx => ctx.User.FindFirstValue("token_type") is "access" or "api_key"));
 
             authOpts.AddPolicy(BedrockPolicyNames.MfaEnrollment, p => p
                 .RequireAuthenticatedUser()
