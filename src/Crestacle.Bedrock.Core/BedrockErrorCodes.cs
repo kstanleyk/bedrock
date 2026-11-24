@@ -81,4 +81,9 @@ public static class BedrockErrorCodes
 
     /// <summary>A validation rule was violated. See the <c>errors</c> array for details.</summary>
     public const string ValidationError = "validation_error";
+
+    /// <summary>An unhandled, non-domain error occurred. The response body never includes the
+    /// underlying exception's message or stack trace; see the server logs (keyed by the returned
+    /// correlation reference) for details.</summary>
+    public const string InternalError = "internal_error";
 }

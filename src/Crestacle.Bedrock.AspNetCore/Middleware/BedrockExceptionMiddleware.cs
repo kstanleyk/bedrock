@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Crestacle.Bedrock.Core;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Exceptions;
 using Microsoft.AspNetCore.Http;
@@ -60,10 +61,19 @@ public sealed class BedrockExceptionMiddleware
             context.Response.Headers["Retry-After"] = ((int)ex.RetryAfter.TotalSeconds).ToString();
             await WriteAsync(context, StatusCodes.Status429TooManyRequests, ex.Code, ex.Message);
         }
-        catch (Exception ex) when (ex is BedrockException bex)
+        catch (BedrockException bex)
         {
-            _logger.LogWarning(ex, "Unhandled BedrockException");
-            await WriteAsync(context, StatusCodes.Status400BadRequest, bex.Code, ex.Message);
+            _logger.LogWarning(bex, "Unhandled BedrockException");
+            await WriteAsync(context, StatusCodes.Status400BadRequest, bex.Code, bex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unhandled exception. TraceIdentifier: {TraceIdentifier}", context.TraceIdentifier);
+            await WriteAsync(
+                context,
+                StatusCodes.Status500InternalServerError,
+                BedrockErrorCodes.InternalError,
+                $"An unexpected error occurred. Reference: {context.TraceIdentifier}");
         }
     }
 

@@ -104,6 +104,20 @@ app.MapControllers();
 
 Place `UseBedrock()` before any middleware that needs the authenticated user.
 
+Bedrock's own exception middleware (step 1 above) catches every exception — including non-Bedrock
+ones — and returns a structured 500 with no leaked message or stack trace, so a request routed
+through `UseBedrock()` is already covered. For real deployments, also register ASP.NET Core's own
+catch-all for anything outside that pipeline (startup failures, middleware you add ahead of
+`UseBedrock()`, endpoints that bypass it):
+
+```csharp
+if (!app.Environment.IsDevelopment())
+    app.UseExceptionHandler("/error");
+```
+
+with a minimal `/error` endpoint that returns a generic `500`. See `samples/*/Program.cs` for the
+pattern used in this repo's sample apps.
+
 ---
 
 ## 5. Run migrations

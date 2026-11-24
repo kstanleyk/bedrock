@@ -75,6 +75,10 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
     await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreatedAsync();
 
+if (!app.Environment.IsDevelopment())
+    app.UseExceptionHandler("/error");
+
 app.UseBedrock();
 app.MapControllers();
+app.Map("/error", () => Results.Problem(statusCode: StatusCodes.Status500InternalServerError));
 app.Run();
