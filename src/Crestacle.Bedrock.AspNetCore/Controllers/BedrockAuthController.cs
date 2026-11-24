@@ -103,15 +103,15 @@ public sealed class BedrockAuthController : ControllerBase
         var result = await _credentials.LoginFirstFactorAsync(
             request.Email, request.Password, ip, userAgent, fingerprint, ct);
 
-        if (!result.Succeeded)
-            return Unauthorized(BedrockResponse<LoginResponse>.Fail("Invalid credentials."));
-
         if (result.IsLockedOut)
         {
             Response.Headers["Retry-After"] =
                 Math.Max(0, (int)(result.LockoutEnd!.Value - DateTime.UtcNow).TotalSeconds).ToString();
             return StatusCode(423, BedrockResponse<LoginResponse>.Fail("Account is locked."));
         }
+
+        if (!result.Succeeded)
+            return Unauthorized(BedrockResponse<LoginResponse>.Fail("Invalid credentials."));
 
         if (result.RequiresEnrollment)
         {
@@ -332,15 +332,15 @@ public sealed class BedrockAuthController : ControllerBase
 
         var result = await _credentials.VerifyMagicLinkAsync(request.TokenHash, ip, userAgent, ct);
 
-        if (!result.Succeeded)
-            return Unauthorized(BedrockResponse<LoginResponse>.Fail("Invalid or expired magic link."));
-
         if (result.IsLockedOut)
         {
             Response.Headers["Retry-After"] =
                 Math.Max(0, (int)(result.LockoutEnd!.Value - DateTime.UtcNow).TotalSeconds).ToString();
             return StatusCode(423, BedrockResponse<LoginResponse>.Fail("Account is locked."));
         }
+
+        if (!result.Succeeded)
+            return Unauthorized(BedrockResponse<LoginResponse>.Fail("Invalid or expired magic link."));
 
         if (result.RequiresEnrollment)
         {

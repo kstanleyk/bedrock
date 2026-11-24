@@ -132,10 +132,10 @@ public sealed class IpRateLimitTests : IDisposable
         await client.PostAsJsonAsync("/api/bedrock/auth/login", new LoginRequest(email, WrongPassword));
         await client.PostAsJsonAsync("/api/bedrock/auth/login", new LoginRequest(email, WrongPassword));
 
-        // Third attempt — 401 Unauthorized (locked result, Succeeded = false), NOT 429
+        // Third attempt — 423 Locked (locked result), NOT 429
         var resp = await client.PostAsJsonAsync("/api/bedrock/auth/login", new LoginRequest(email, WrongPassword));
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
-            because: "per-credential lockout returns 401, not 429 (IP limit is not reached)");
+        resp.StatusCode.Should().Be((HttpStatusCode)423,
+            because: "per-credential lockout returns 423, not 429 (IP limit is not reached)");
     }
 
     // -------------------------------------------------------------------------

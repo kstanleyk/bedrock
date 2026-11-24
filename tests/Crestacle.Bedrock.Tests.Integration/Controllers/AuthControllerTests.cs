@@ -135,6 +135,33 @@ public sealed class AuthControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Login_LockedOutAccount_Returns423WithRetryAfter()
+    {
+        var email = "ctrl-locked@example.com";
+        await RegisterAndActivateAsync(email);
+
+        for (var i = 0; i < 5; i++)
+        {
+            await _client.PostAsJsonAsync(
+                "/api/bedrock/auth/login",
+                new LoginRequest(email, "WrongPassword1!"));
+        }
+
+        var response = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, "WrongPassword1!"));
+
+        response.StatusCode.Should().Be((HttpStatusCode)423);
+        response.Headers.Should().ContainKey("Retry-After");
+
+        var lockedOutWithCorrectPassword = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, ValidPassword));
+
+        lockedOutWithCorrectPassword.StatusCode.Should().Be((HttpStatusCode)423);
+    }
+
+    [Fact]
     public async Task Login_UnknownEmail_Returns401()
     {
         var response = await _client.PostAsJsonAsync(
