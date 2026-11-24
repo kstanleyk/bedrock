@@ -10,7 +10,7 @@ namespace Crestacle.Bedrock.AspNetCore.Controllers;
 
 [ApiController]
 [Route("audit")]
-[Authorize(Policy = BedrockPolicyNames.Default)]
+[Authorize(Policy = BedrockPolicyNames.Admin)]
 public sealed class BedrockAuditController : ControllerBase
 {
     private readonly IAuditRepository _auditRepo;
