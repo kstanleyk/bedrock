@@ -374,6 +374,8 @@ internal sealed partial class CredentialService : ICredentialService
                 LogAccountLocked(_logger, credential.UserId, credential.TenantId);
                 BedrockTelemetry.AccountLockouts.Add(1);
                 await _emailSender.SendAccountLockedAsync(email, credential.LockoutEnd!.Value, ct);
+                await _eventPublisher.PublishAsync(
+                    new AccountLockedEvent(credential.UserId, credential.LockoutEnd!.Value, ip, DateTime.UtcNow), ct);
                 BedrockTelemetry.LoginFailures.Add(1);
                 activity?.SetTag("bedrock.result", "locked");
                 return FirstFactorResult.Locked(credential.UserId, credential.LockoutEnd!.Value);
@@ -457,7 +459,7 @@ internal sealed partial class CredentialService : ICredentialService
             await _unitOfWork.SaveChangesAsync(ct);
 
             if (wasLocked)
-                await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
             await _eventPublisher.PublishAsync(
                 new LoginSucceededEvent(credential.UserId, ip, credential.MfaEnabled, DateTime.UtcNow), ct);
 
@@ -480,7 +482,7 @@ internal sealed partial class CredentialService : ICredentialService
             {
                 await _unitOfWork.SaveChangesAsync(ct);
                 if (wasLocked)
-                    await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                    await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
                 await _eventPublisher.PublishAsync(
                     new LoginSucceededEvent(credential.UserId, ip, false, DateTime.UtcNow), ct);
                 var enrollmentToken = _tokenService.GenerateEnrollmentToken(credential.UserId);
@@ -497,7 +499,7 @@ internal sealed partial class CredentialService : ICredentialService
                 await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
                 await _unitOfWork.SaveChangesAsync(ct);
                 if (wasLocked)
-                    await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                    await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
                 await _eventPublisher.PublishAsync(
                     new LoginSucceededEvent(credential.UserId, ip, false, DateTime.UtcNow), ct);
                 activity?.SetTag("bedrock.mfa_required", false);
@@ -509,7 +511,7 @@ internal sealed partial class CredentialService : ICredentialService
             await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
             await _unitOfWork.SaveChangesAsync(ct);
             if (wasLocked)
-                await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
             await _eventPublisher.PublishAsync(
                 new LoginSucceededEvent(credential.UserId, ip, false, DateTime.UtcNow), ct);
             activity?.SetTag("bedrock.mfa_required", false);
@@ -523,7 +525,7 @@ internal sealed partial class CredentialService : ICredentialService
         await _unitOfWork.SaveChangesAsync(ct);
 
         if (wasLocked)
-            await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+            await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
         await _eventPublisher.PublishAsync(
             new LoginSucceededEvent(credential.UserId, ip, credential.MfaEnabled, DateTime.UtcNow), ct);
 
@@ -596,7 +598,11 @@ internal sealed partial class CredentialService : ICredentialService
             await _unitOfWork.SaveChangesAsync(ct);
 
             if (credential.IsLockedOut())
+            {
+                await _eventPublisher.PublishAsync(
+                    new AccountLockedEvent(credential.UserId, credential.LockoutEnd!.Value, ip, DateTime.UtcNow), ct);
                 throw new BedrockAccountLockedException(credential.LockoutEnd!.Value);
+            }
 
             throw new BedrockValidationException("The verification code is incorrect.");
         }

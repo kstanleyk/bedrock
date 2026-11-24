@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
+using Crestacle.Bedrock.Core.DomainEvents;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Interfaces;
+using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,13 +20,18 @@ public sealed class AuthControllerTests : IDisposable
     private readonly BedrockTestServer _server;
     private readonly HttpClient _client;
     private readonly CapturingEmailSender _emailSender = new();
+    private readonly CapturingEventPublisher _eventPublisher = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
 
     public AuthControllerTests()
     {
         _server = new BedrockTestServer(
-            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
+            configureServices: services =>
+            {
+                services.AddSingleton<IEmailSender>(_emailSender);
+                services.AddSingleton<IBedrockEventPublisher>(_eventPublisher);
+            });
         _client = _server.Client;
     }
 
@@ -163,6 +170,38 @@ public sealed class AuthControllerTests : IDisposable
             new LoginRequest(email, ValidPassword));
 
         lockedOutWithCorrectPassword.StatusCode.Should().Be((HttpStatusCode)423);
+    }
+
+    [Fact]
+    public async Task Login_AccountJustBecameLockedOut_PublishesAccountLockedEvent()
+    {
+        var email = "ctrl-locked-event@example.com";
+        await RegisterAndActivateAsync(email);
+
+        for (var i = 0; i < 4; i++)
+        {
+            await _client.PostAsJsonAsync(
+                "/api/bedrock/auth/login",
+                new LoginRequest(email, "WrongPassword1!"));
+        }
+        _eventPublisher.Published.OfType<AccountLockedEvent>().Should().BeEmpty(
+            "the account must not be considered locked before the threshold is actually crossed");
+
+        // The 5th failed attempt is the one that actually trips the lock.
+        await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, "WrongPassword1!"));
+
+        _eventPublisher.Published.OfType<AccountLockedEvent>().Should().ContainSingle(
+            "exactly one AccountLockedEvent must be published the moment the account becomes locked");
+
+        // A subsequent attempt against the already-locked account must not publish it again.
+        await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, "WrongPassword1!"));
+
+        _eventPublisher.Published.OfType<AccountLockedEvent>().Should().ContainSingle(
+            "AccountLockedEvent marks the transition into lockout, not every subsequent attempt against an already-locked account");
     }
 
     [Fact]
