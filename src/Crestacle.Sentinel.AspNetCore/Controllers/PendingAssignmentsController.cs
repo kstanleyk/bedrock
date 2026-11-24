@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Crestacle.Sentinel.AspNetCore.Authorization;
 using Crestacle.Sentinel.Core.Authorization;
 using Crestacle.Sentinel.Core.DTOs;
@@ -74,4 +75,6 @@ public sealed class PendingAssignmentsController(
     }
 }
 
-public sealed record RejectAssignmentRequest(string? Reason);
+// Matches PendingAssignment.RejectionReason's HasMaxLength(500) (PendingAssignmentConfiguration.cs).
+public sealed record RejectAssignmentRequest(
+    [StringLength(500)] string? Reason);
