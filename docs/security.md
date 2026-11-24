@@ -31,6 +31,10 @@ The following are enabled and hardened out of the box. You should not disable th
 ### JWT signing key
 
 Use a randomly generated key of at least 32 characters. Do not use a predictable or short key.
+This minimum length is enforced at startup — `BedrockOptions.Validate()` throws an
+`InvalidOperationException` if `Jwt.SigningKey` is set but shorter than 32 characters, so a
+weak HS256 key fails fast instead of just being discouraged by this doc. The check only
+applies to the HS256 `SigningKey` path; an RS256 `SigningCertificate` is not length-checked.
 
 ```bash
 # Generate a suitable key
