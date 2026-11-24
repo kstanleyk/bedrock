@@ -4,9 +4,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure.Postgres;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Crestacle.Bedrock.Tests.Integration.Controllers.Postgres;
@@ -40,7 +42,12 @@ public sealed class PostgresIntegrationTests : IDisposable
 
     public PostgresIntegrationTests()
     {
-        _server = new PostgresBedrockTestServer();
+        // The audit endpoint is admin-gated (see AuditControllerTests' own SQLite coverage);
+        // every test in this class gets a bedrock_admin claim so Login_AuditEventRecorded can
+        // exercise it without a second server instance re-wiping the shared Postgres schema.
+        _server = new PostgresBedrockTestServer(
+            configureServices: services =>
+                services.AddSingleton<IBedrockClaimsEnricher, AdminClaimsEnricher>());
         _client = _server.Client;
     }
 
@@ -245,4 +252,11 @@ public sealed class PostgresIntegrationTests : IDisposable
     }
 
     public void Dispose() => _server.Dispose();
+
+    private sealed class AdminClaimsEnricher : IBedrockClaimsEnricher
+    {
+        public Task<IDictionary<string, string>> EnrichAsync(Guid userId, CancellationToken ct = default)
+            => Task.FromResult<IDictionary<string, string>>(
+                new Dictionary<string, string> { ["bedrock_admin"] = "true" });
+    }
 }

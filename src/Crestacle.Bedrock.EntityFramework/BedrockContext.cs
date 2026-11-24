@@ -48,9 +48,10 @@ public class BedrockContext : DbContext
         ApplyUtcConverters(modelBuilder);
         ApplyTenantFilters(modelBuilder);
 
-        // UserCredentialConfiguration/SessionConfiguration's IsRowVersion() is a genuine,
-        // DB-enforced optimistic-concurrency token only on SQL Server, where the native
-        // rowversion/timestamp column type auto-increments on every write. PostgreSQL has no
+        // UserCredentialConfiguration/SessionConfiguration/RefreshTokenConfiguration's
+        // IsRowVersion() is a genuine, DB-enforced optimistic-concurrency token only on SQL
+        // Server, where the native rowversion/timestamp column type auto-increments on every
+        // write. PostgreSQL has no
         // equivalent for a plain byte[] column -- nothing in the database ever changes its
         // value, so the "concurrency check" would be a silent no-op there (see
         // docs/quality-roadmap.md D5). Auto-detected (not an opt-in extension method a consumer
@@ -70,7 +71,7 @@ public class BedrockContext : DbContext
         // xmin is a PostgreSQL system column (type xid = uint) that increments on every row
         // update -- mapping it as a shadow concurrency token is the real, DB-enforced
         // equivalent of SQL Server's IsRowVersion().
-        foreach (var entityType in new[] { typeof(UserCredential), typeof(Session) })
+        foreach (var entityType in new[] { typeof(UserCredential), typeof(Session), typeof(RefreshToken) })
         {
             modelBuilder.Entity(entityType)
                 .Property<uint>("xmin")
