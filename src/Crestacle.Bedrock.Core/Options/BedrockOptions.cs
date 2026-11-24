@@ -45,7 +45,10 @@ public sealed class BedrockOptions
     /// <summary>
     /// Validates that the options are in a consistent state.
     /// Throws <see cref="InvalidOperationException"/> when required settings are missing.
-    /// Called automatically during DI registration.
+    /// <c>AddBedrockAspNetCore</c> registers this via <c>ValidateOnStart()</c>, so it runs
+    /// automatically as part of the generic host's startup sequence — after every
+    /// <c>Configure&lt;BedrockOptions&gt;</c> call (including appsettings-bound ones) has run,
+    /// not during the <c>AddBedrockAspNetCore</c> call itself.
     /// </summary>
     public void Validate()
     {

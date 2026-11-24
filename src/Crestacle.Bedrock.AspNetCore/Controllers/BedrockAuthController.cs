@@ -193,7 +193,7 @@ public sealed class BedrockAuthController : ControllerBase
         [FromBody] RefreshRequest request,
         CancellationToken ct)
     {
-        var refreshToken = Request.Cookies[ResolveRefreshCookieSettings().Name];
+        var refreshToken = Request.Cookies[ResolveRefreshCookieSettings().Name] ?? request.RefreshToken;
         if (string.IsNullOrEmpty(refreshToken))
             return Unauthorized(BedrockResponse<TokenResponse>.Fail("No refresh token."));
 

@@ -63,6 +63,19 @@ public static class BedrockAspNetCoreServiceCollectionExtensions
         if (configure is not null)
             services.Configure<BedrockOptions>(configure);
 
+        // BedrockOptions.Validate()'s own doc comment promises this runs automatically; it was
+        // previously never actually invoked anywhere, so a missing Jwt.SigningKey/Certificate
+        // silently surfaced later as an opaque failure the first time a step-up/MFA/enrollment
+        // token needed signing, instead of failing fast. ValidateOnStart runs this as part of
+        // the generic host's startup sequence (.NET 8+), after every Configure call (including
+        // appsettings-bound ones the consumer registers before calling this method) has had a
+        // chance to run -- not merely during this call, despite the doc's current wording.
+        services.AddOptions<BedrockOptions>().Validate(opts =>
+        {
+            opts.Validate();
+            return true;
+        }).ValidateOnStart();
+
         // --- DataProtection (required by TotpService for TOTP secret encryption) ---
         services.AddDataProtection();
 

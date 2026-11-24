@@ -88,13 +88,19 @@ For stronger protection, also enable HIBP breach detection — see [HIBP integra
 
 ### MFA enforcement
 
-To require MFA for privileged users, add their roles to `MandatoryRoles`:
+`MandatoryRoles` is currently a global switch, **not** per-role scoped despite its name: setting
+it to any non-empty list makes MFA mandatory for **every** credential, not just ones holding the
+listed roles — `Crestacle.Bedrock.Core` has no concept of roles at all (that's a Sentinel/RBAC
+concern in a separate package it doesn't depend on), so there is no way to check which roles the
+credential being evaluated actually holds.
 
 ```csharp
+// Makes MFA mandatory for every user, regardless of role — the role names here are
+// currently only used to decide WHETHER to turn this on, not WHO it applies to.
 opts.Mfa.MandatoryRoles = ["admin", "finance"];
 ```
 
-Users in those roles have a grace period (default: 14 days) to enrol before access is blocked.
+Every credential gets a grace period (default: 14 days) to enrol before access is blocked.
 
 ---
 

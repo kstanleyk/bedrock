@@ -327,6 +327,10 @@ internal sealed partial class CredentialService : ICredentialService
 
         if (credential.IsLockedOut())
         {
+            // Constant-time: run the same Argon2id verify the wrong-password/unknown-user
+            // branches pay for, so a locked-out account's response isn't measurably faster
+            // and distinguishable from "wrong password" / "no such user" via timing.
+            _ = _hasher.Verify(password, credential.PasswordHash);
             await IncrementIpFailCountAsync(ip, ct);
             await _auditRepo.AddAsync(
                 AuditEntry.Create(AuditEventType.LoginFailed, ip, userAgent,

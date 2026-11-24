@@ -5,9 +5,18 @@ namespace Crestacle.Bedrock.Core.Interfaces.Services;
 /// <summary>Evaluates the mandatory MFA policy for a given credential.</summary>
 public interface IMfaPolicyService
 {
-    /// <summary>Returns true when mandatory MFA is configured (any MandatoryRoles present).</summary>
+    /// <summary>
+    /// Returns true when mandatory MFA is configured. This is currently a global gate, NOT
+    /// per-role scoped: a non-empty <c>MandatoryRoles</c> makes MFA mandatory for every
+    /// credential, regardless of which role (if any) it actually holds. <c>Crestacle.Bedrock.Core</c>
+    /// has no concept of roles (that's a Sentinel/RBAC concern in a separate package it does not
+    /// depend on), so <paramref name="credential"/> cannot be checked against
+    /// <c>MandatoryRoles</c> membership here. The parameter exists for realm-aware resolution
+    /// (see the default implementation's remarks) and for forward-compatibility, not because it
+    /// is evaluated today.
+    /// </summary>
     /// <param name="credential">The credential to evaluate.</param>
-    /// <returns><see langword="true"/> when at least one mandatory role is configured and the credential holds that role.</returns>
+    /// <returns><see langword="true"/> when at least one mandatory role is configured, for ANY credential.</returns>
     bool IsMfaRequired(UserCredential credential);
 
     /// <summary>Returns true when the grace period has been set and has not yet expired.</summary>

@@ -235,6 +235,9 @@ internal sealed partial class PasskeyService : IPasskeyService
         var userCredential = await _credentialRepo.GetByUserIdAsync(storedCred.UserId, ct)
             ?? throw new BedrockValidationException("User not found.");
 
+        if (userCredential.IsLockedOut())
+            throw new BedrockAccountLockedException(userCredential.LockoutEnd!.Value);
+
         await _auditRepo.AddAsync(
             AuditEntry.Create(AuditEventType.PasskeyAuthenticated, ipAddress, userAgent,
                 storedCred.UserId, tenantId: userCredential.TenantId), ct);
