@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Crestacle.Bedrock.Core.Exceptions;
 using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Repositories;
 using Crestacle.Bedrock.Core.Interfaces.Services;
@@ -57,7 +58,22 @@ public sealed class RequiresStepUpAttribute : Attribute, IAsyncAuthorizationFilt
 
         challenge.MarkUsed();
         await challengeRepo.UpdateAsync(challenge);
-        await unitOfWork.SaveChangesAsync();
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync();
+        }
+        catch (BedrockConcurrencyException)
+        {
+            // Two parallel requests presenting the same step-up JWT can both load the
+            // challenge (separate per-request DbContexts) before either save commits, both
+            // pass the UsedAt-is-null check above, and both call MarkUsed(). RowVersion makes
+            // the loser's save fail here instead of silently marking the challenge used twice --
+            // surfaced identically to an already-used token, since that is exactly what this is
+            // from the caller's perspective.
+            context.Result = new ObjectResult(new { error = "Step-up token has already been used." })
+                { StatusCode = StatusCodes.Status403Forbidden };
+        }
     }
 
     private static Guid? GetUserId(AuthorizationFilterContext context)

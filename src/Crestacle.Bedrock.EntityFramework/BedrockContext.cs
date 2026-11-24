@@ -48,7 +48,8 @@ public class BedrockContext : DbContext
         ApplyUtcConverters(modelBuilder);
         ApplyTenantFilters(modelBuilder);
 
-        // UserCredentialConfiguration/SessionConfiguration/RefreshTokenConfiguration's
+        // UserCredentialConfiguration/SessionConfiguration/RefreshTokenConfiguration/
+        // StepUpChallengeConfiguration's
         // IsRowVersion() is a genuine, DB-enforced optimistic-concurrency token only on SQL
         // Server, where the native rowversion/timestamp column type auto-increments on every
         // write. PostgreSQL has no
@@ -71,7 +72,7 @@ public class BedrockContext : DbContext
         // xmin is a PostgreSQL system column (type xid = uint) that increments on every row
         // update -- mapping it as a shadow concurrency token is the real, DB-enforced
         // equivalent of SQL Server's IsRowVersion().
-        foreach (var entityType in new[] { typeof(UserCredential), typeof(Session), typeof(RefreshToken) })
+        foreach (var entityType in new[] { typeof(UserCredential), typeof(Session), typeof(RefreshToken), typeof(StepUpChallenge) })
         {
             modelBuilder.Entity(entityType)
                 .Property<uint>("xmin")

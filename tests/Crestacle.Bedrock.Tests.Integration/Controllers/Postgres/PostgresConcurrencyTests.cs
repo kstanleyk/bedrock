@@ -1,4 +1,5 @@
 using Crestacle.Bedrock.Core.Entities;
+using Crestacle.Bedrock.Core.Enumerations;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure.Postgres;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -105,5 +106,38 @@ public sealed class PostgresConcurrencyTests
         var act = async () => await db2.SaveChangesAsync();
         await act.Should().ThrowAsync<DbUpdateConcurrencyException>(
             "two concurrent rotations of the same refresh token must not both silently succeed");
+    }
+
+    /// <summary>
+    /// Regression coverage for docs/quality-roadmap.md D4: RequiresStepUpAttribute.OnAuthorizationAsync
+    /// read the StepUpChallenge, checked UsedAt is not null, called MarkUsed(), then saved -- with
+    /// no transaction or concurrency token. Two parallel requests with the same step-up JWT
+    /// (loaded in separate per-request DbContexts) could both pass the used-check before either
+    /// save committed, both marking the challenge used -- defeating single-use enforcement.
+    /// StepUpChallenge.RowVersion -> Postgres xmin now makes the loser's save throw instead.
+    /// </summary>
+    [PostgresFact]
+    public async Task StepUpChallenge_ConcurrentMarkUsed_SecondSaveThrowsConcurrencyException()
+    {
+        using var db1 = PostgresDbContextFactory.Create();
+
+        var challenge = StepUpChallenge.Create(
+            Guid.NewGuid(), MfaMethod.Totp, codeHash: null, "1.2.3.4", DateTime.UtcNow.AddMinutes(5));
+        db1.StepUpChallenges.Add(challenge);
+        await db1.SaveChangesAsync();
+
+        using var db2 = PostgresDbContextFactory.CreateWithoutResettingSchema();
+        var copyInCtx1 = await db1.StepUpChallenges.FirstAsync(c => c.Id == challenge.Id);
+        var copyInCtx2 = await db2.StepUpChallenges.FirstAsync(c => c.Id == challenge.Id);
+
+        // Simulates the two racing requests each marking the same challenge used.
+        copyInCtx1.MarkUsed();
+        copyInCtx2.MarkUsed();
+
+        await db1.SaveChangesAsync();
+
+        var act = async () => await db2.SaveChangesAsync();
+        await act.Should().ThrowAsync<DbUpdateConcurrencyException>(
+            "two concurrent uses of the same step-up challenge must not both silently succeed");
     }
 }
