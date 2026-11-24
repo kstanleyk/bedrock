@@ -13,7 +13,8 @@ namespace Crestacle.Sentinel.AspNetCore.Controllers;
 public sealed class UsersController(
     IUserRepository              userRepository,
     IRoleRepository              roleRepository,
-    IPendingAssignmentRepository pendingAssignmentRepository) : ControllerBase
+    IPendingAssignmentRepository pendingAssignmentRepository,
+    IUserPermissionRepository    userPermissionRepository) : ControllerBase
 {
     [HttpGet]
     [MustHavePermission(SentinelFeature.User, AppAction.Read)]
@@ -76,6 +77,13 @@ public sealed class UsersController(
         if (await IsSelfAsync(id, cancellationToken))
             return Forbid();
 
+        // Guard: an actor may only assign a role whose permissions they themselves hold --
+        // mirrors RolesController.AssignPermission's symmetric guard. Without this, a user
+        // who only has User.Update (but none of the role's own permissions) could launder a
+        // privilege escalation by assigning a highly-privileged role to a colluding account.
+        if (!await ActorHoldsAllRolePermissionsAsync(request.RoleId, cancellationToken))
+            return Forbid();
+
         // 4-Eyes: if the target role requires dual approval, create a pending request instead.
         // ExpiresOn is preserved so the approver creates a time-bound assignment.
         if (await roleRepository.RequiresDualApprovalAsync(request.RoleId, cancellationToken))
@@ -122,6 +130,20 @@ public sealed class UsersController(
 
         var targetIdentityId = await userRepository.GetIdentityIdAsync(targetUserId, ct);
         return targetIdentityId == callerSubject;
+    }
+
+    private async Task<bool> ActorHoldsAllRolePermissionsAsync(Guid roleId, CancellationToken ct)
+    {
+        var subject = User.GetSubject();
+        if (string.IsNullOrEmpty(subject))
+            return false;
+
+        var role = await roleRepository.GetByIdAsync(roleId, ct);
+        if (role is null)
+            return true; // let AddRoleAsync's own not-found handling produce the 404
+
+        var actorPermissions = await userPermissionRepository.GetPermissionsForUserAsync(subject, ct);
+        return role.Permissions.All(p => actorPermissions.Contains(p.Id));
     }
 }
 
