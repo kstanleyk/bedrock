@@ -187,7 +187,7 @@ public sealed class MfaServiceTests : IDisposable
             "totp-verify@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");
 
         var verifiedUserId = await _service.VerifyMfaAsync(
-            loginResult.Challenge!.ChallengeToken, ComputeTotp(secret), "127.0.0.1", "Agent/1.0");
+            loginResult.Challenge!.ChallengeToken, ComputeTotp(secret), "127.0.0.1", "Agent/1.0", "fp1");
 
         verifiedUserId.Should().Be(userId);
     }
@@ -203,7 +203,7 @@ public sealed class MfaServiceTests : IDisposable
             "totp-wrong@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");
 
         var act = async () => await _service.VerifyMfaAsync(
-            loginResult.Challenge!.ChallengeToken, "000000", "127.0.0.1", "Agent/1.0");
+            loginResult.Challenge!.ChallengeToken, "000000", "127.0.0.1", "Agent/1.0", "fp1");
         await act.Should().ThrowAsync<BedrockValidationException>()
             .WithMessage("*verification code is incorrect*");
     }
@@ -212,7 +212,7 @@ public sealed class MfaServiceTests : IDisposable
     public async Task VerifyMfaAsync_InvalidChallengeToken_ThrowsValidation()
     {
         var act = async () => await _service.VerifyMfaAsync(
-            "not.a.valid.jwt", "123456", "127.0.0.1", "Agent/1.0");
+            "not.a.valid.jwt", "123456", "127.0.0.1", "Agent/1.0", "fp1");
         await act.Should().ThrowAsync<BedrockValidationException>()
             .WithMessage("*Invalid or expired challenge token*");
     }
@@ -229,7 +229,7 @@ public sealed class MfaServiceTests : IDisposable
         var login1 = await _service.LoginFirstFactorAsync(
             "totp-replay@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");
         var code = ComputeTotp(secret);
-        await _service.VerifyMfaAsync(login1.Challenge!.ChallengeToken, code, "127.0.0.1", "Agent/1.0");
+        await _service.VerifyMfaAsync(login1.Challenge!.ChallengeToken, code, "127.0.0.1", "Agent/1.0", "fp1");
 
         // Immediately initiate a second login — still within the 90-second TOTP validity window
         var login2 = await _service.LoginFirstFactorAsync(
@@ -237,7 +237,7 @@ public sealed class MfaServiceTests : IDisposable
 
         // The same code must be rejected as a replay
         var act = async () => await _service.VerifyMfaAsync(
-            login2.Challenge!.ChallengeToken, code, "127.0.0.1", "Agent/1.0");
+            login2.Challenge!.ChallengeToken, code, "127.0.0.1", "Agent/1.0", "fp2");
         await act.Should().ThrowAsync<BedrockValidationException>()
             .WithMessage("*verification code is incorrect*");
     }
@@ -254,10 +254,10 @@ public sealed class MfaServiceTests : IDisposable
             "totp-reuse-challenge@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");
         var challengeToken = loginResult.Challenge!.ChallengeToken;
 
-        await _service.VerifyMfaAsync(challengeToken, ComputeTotp(secret), "127.0.0.1", "Agent/1.0");
+        await _service.VerifyMfaAsync(challengeToken, ComputeTotp(secret), "127.0.0.1", "Agent/1.0", "fp1");
 
         var act = async () => await _service.VerifyMfaAsync(
-            challengeToken, ComputeTotp(secret), "127.0.0.1", "Agent/1.0");
+            challengeToken, ComputeTotp(secret), "127.0.0.1", "Agent/1.0", "fp1");
         await act.Should().ThrowAsync<BedrockValidationException>()
             .WithMessage("*expired or already been used*");
     }
@@ -278,7 +278,7 @@ public sealed class MfaServiceTests : IDisposable
             "recovery-valid@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");
 
         var verifiedUserId = await _service.VerifyMfaAsync(
-            loginResult.Challenge!.ChallengeToken, recoveryCodes.Codes[0], "127.0.0.1", "Agent/1.0");
+            loginResult.Challenge!.ChallengeToken, recoveryCodes.Codes[0], "127.0.0.1", "Agent/1.0", "fp1");
 
         verifiedUserId.Should().Be(userId);
     }
@@ -294,12 +294,12 @@ public sealed class MfaServiceTests : IDisposable
 
         var login1 = await _service.LoginFirstFactorAsync(
             "recovery-reuse@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");
-        await _service.VerifyMfaAsync(login1.Challenge!.ChallengeToken, plainCode, "127.0.0.1", "Agent/1.0");
+        await _service.VerifyMfaAsync(login1.Challenge!.ChallengeToken, plainCode, "127.0.0.1", "Agent/1.0", "fp1");
 
         var login2 = await _service.LoginFirstFactorAsync(
             "recovery-reuse@example.com", ValidPassword, "127.0.0.1", "Agent/1.0", "fp1");
         var act = async () => await _service.VerifyMfaAsync(
-            login2.Challenge!.ChallengeToken, plainCode, "127.0.0.1", "Agent/1.0");
+            login2.Challenge!.ChallengeToken, plainCode, "127.0.0.1", "Agent/1.0", "fp1");
         await act.Should().ThrowAsync<BedrockValidationException>();
     }
 
@@ -357,7 +357,7 @@ public sealed class MfaServiceTests : IDisposable
         otpCode.Should().NotBeNullOrEmpty();
 
         var verifiedUserId = await _service.VerifyMfaAsync(
-            loginResult.Challenge!.ChallengeToken, otpCode, "127.0.0.1", "Agent/1.0");
+            loginResult.Challenge!.ChallengeToken, otpCode, "127.0.0.1", "Agent/1.0", "fp1");
 
         verifiedUserId.Should().Be(userId);
     }

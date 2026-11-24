@@ -523,7 +523,7 @@ internal sealed partial class CredentialService : ICredentialService
     // -------------------------------------------------------------------------
 
     public async Task<Guid> VerifyMfaAsync(
-        string challengeToken, string code, string ip, string userAgent,
+        string challengeToken, string code, string ip, string userAgent, string fingerprintHash,
         CancellationToken ct = default)
     {
         var challengeId = _tokenService.ValidateChallengeToken(challengeToken)
@@ -593,10 +593,12 @@ internal sealed partial class CredentialService : ICredentialService
             AuditEntry.Create(AuditEventType.MfaChallengeSucceeded, ip, userAgent,
                 challenge.UserId, tenantId: credential.TenantId), ct);
 
-        // Record device on successful MFA completion — staged alongside challenge + audit
-        var fingerprint = _anomalyDetector.ComputeFingerprint(userAgent, ip);
+        // Record device on successful MFA completion — staged alongside challenge + audit.
+        // Uses the SAME client-supplied fingerprintHash LoginFirstFactorAsync's anomaly check
+        // is keyed on (not AnomalyDetector.ComputeFingerprint(userAgent, ip), a different value
+        // space) so a device recorded here is actually recognized by a later plain-password login.
         var ipBlock = _anomalyDetector.ExtractIpBlock(ip);
-        await _anomalyDetector.RecordDeviceAsync(challenge.UserId, fingerprint, ipBlock, userAgent, ct);
+        await _anomalyDetector.RecordDeviceAsync(challenge.UserId, fingerprintHash, ipBlock, userAgent, ct);
 
         await _unitOfWork.SaveChangesAsync(ct);
 
@@ -823,7 +825,8 @@ internal sealed partial class CredentialService : ICredentialService
     }
 
     public async Task<FirstFactorResult> VerifyMagicLinkAsync(
-        string rawToken, string ipAddress, string userAgent, CancellationToken ct = default)
+        string rawToken, string ipAddress, string userAgent, string fingerprintHash,
+        CancellationToken ct = default)
     {
         var tokenHash = ComputeTokenHash(rawToken);
         var token = await _magicLinkTokenRepo.GetByHashAsync(tokenHash, ct);
@@ -892,20 +895,22 @@ internal sealed partial class CredentialService : ICredentialService
                 return FirstFactorResult.EnrollmentRequired(credential.UserId, enrollmentToken);
             }
 
-            var fingerprint = _anomalyDetector.ComputeFingerprint(userAgent, ipAddress);
+            // Uses the client-supplied fingerprintHash (same value space LoginFirstFactorAsync's
+            // anomaly check is keyed on), not AnomalyDetector.ComputeFingerprint(userAgent, ip) --
+            // see VerifyMfaAsync's matching comment for why that distinction matters.
             var ipBlock = _anomalyDetector.ExtractIpBlock(ipAddress);
 
             if (!credential.MfaGracePeriodEndsAt.HasValue)
             {
                 var gracePeriodEnd = _mfaPolicy.SetGracePeriod(credential);
                 await _credentialRepo.UpdateAsync(credential, ct);
-                await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprint, ipBlock, userAgent, ct);
+                await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
                 await _unitOfWork.SaveChangesAsync(ct);
                 LogMagicLinkConsumed(_logger, credential.UserId, credential.TenantId);
                 return FirstFactorResult.SuccessInGracePeriod(credential.UserId, gracePeriodEnd);
             }
 
-            await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprint, ipBlock, userAgent, ct);
+            await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
             await _unitOfWork.SaveChangesAsync(ct);
             LogMagicLinkConsumed(_logger, credential.UserId, credential.TenantId);
             return FirstFactorResult.SuccessInGracePeriod(credential.UserId, credential.MfaGracePeriodEndsAt!.Value);
