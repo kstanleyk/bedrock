@@ -146,7 +146,8 @@ internal sealed class RoleRepository(
                 $"{roleId}/{permissionId}",
                 actor.IdentityId,
                 actor.IpAddress,
-                actor.UserAgent));
+                actor.UserAgent,
+                tenantId));
 
             try
             {
@@ -197,7 +198,8 @@ internal sealed class RoleRepository(
             $"{roleId}/{permissionId}",
             actor.IdentityId,
             actor.IpAddress,
-            actor.UserAgent));
+            actor.UserAgent,
+            tenantId));
 
         try
         {

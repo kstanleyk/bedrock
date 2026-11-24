@@ -91,6 +91,19 @@ builder.Services
     // BedrockTenantContextAdapter bridges this to Sentinel automatically
 ```
 
+**Important — the null-TenantId contract:** across every Sentinel repository (users, roles,
+permissions, pending assignments, and the audit log), a `null` value from `ITenantContext.TenantId`
+means "single-tenant mode — do not filter by tenant at all," not "filter to tenant = null." This is
+intentional (it is what lets a single-tenant host skip registering `ITenantContext` entirely and
+still see all its own data), but it is load-bearing: if your `ITenantContext` implementation can
+ever resolve to `null` by accident in what is meant to be a genuinely multi-tenant deployment — a
+missing claim, a failed header parse, a bug in your own resolution logic — every Sentinel query,
+including `GET /api/auth/audit`, silently stops filtering and returns rows across **every** tenant
+to that caller. A multi-tenant host MUST guarantee its `ITenantContext.TenantId` never resolves to
+null except in the single-tenant case you actually intend; throwing (or otherwise failing closed)
+when the expected tenant signal is missing is safer than returning `null` and falling back to
+unfiltered access.
+
 ---
 
 ## Single-tenant deployments

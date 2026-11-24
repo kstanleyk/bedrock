@@ -88,7 +88,9 @@ public static class DependencyInjection
                 sp.GetRequiredService<ILogger<PendingAssignmentRepository>>()));
 
         services.AddScoped<IAuditRepository>(sp =>
-            new AuditRepository(sp.GetRequiredService<TContext>()));
+            new AuditRepository(
+                sp.GetRequiredService<TContext>(),
+                sp.GetRequiredService<ITenantContext>()));
 
         return services;
     }
