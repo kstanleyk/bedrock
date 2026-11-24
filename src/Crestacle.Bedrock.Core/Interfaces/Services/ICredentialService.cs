@@ -19,9 +19,17 @@ public interface ICredentialService
     /// <param name="email">The user's email address; must be unique across the tenant.</param>
     /// <param name="password">The plaintext password; validated against configured complexity rules before hashing.</param>
     /// <param name="tenantId">Optional tenant identifier for multi-tenant deployments.</param>
+    /// <param name="sendVerificationEmail">
+    /// When <see langword="false"/>, skips creating an <c>EmailVerificationToken</c> and sending
+    /// the verification email entirely — for callers (e.g. invitation acceptance) that will
+    /// force-confirm the email themselves moments later in the same operation, where a
+    /// verification token/email would be genuinely dangling, not merely redundant.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <exception cref="BedrockValidationException">Thrown when the email is already registered or the password fails complexity validation.</exception>
-    Task RegisterAsync(Guid userId, string email, string password, string? tenantId = null, CancellationToken ct = default);
+    Task RegisterAsync(
+        Guid userId, string email, string password, string? tenantId = null,
+        bool sendVerificationEmail = true, CancellationToken ct = default);
 
     /// <summary>Activates an email address using the verification token sent during registration.</summary>
     /// <param name="rawToken">The raw token value from the verification link (not pre-hashed).</param>

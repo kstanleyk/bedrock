@@ -104,7 +104,9 @@ internal sealed partial class CredentialService : ICredentialService
     // Registration & email
     // -------------------------------------------------------------------------
 
-    public async Task RegisterAsync(Guid userId, string email, string password, string? tenantId = null, CancellationToken ct = default)
+    public async Task RegisterAsync(
+        Guid userId, string email, string password, string? tenantId = null,
+        bool sendVerificationEmail = true, CancellationToken ct = default)
     {
         if (!_validator.IsValid(password, out var errors))
             throw new BedrockValidationException(errors);
@@ -118,17 +120,29 @@ internal sealed partial class CredentialService : ICredentialService
 
         await _historyRepo.AddAsync(PasswordHistory.Create(userId, hash, tenantId), ct);
 
-        var rawToken = GenerateToken();
-        var tokenHash = ComputeTokenHash(rawToken);
-        await _emailTokenRepo.AddAsync(
-            EmailVerificationToken.Create(userId, tokenHash,
-                DateTime.UtcNow.Add(_options.TokenExpiry.EmailVerificationToken), tenantId), ct);
+        // Invitation acceptance (InvitationService.AcceptInvitationAsync) registers with
+        // sendVerificationEmail: false and force-confirms the email itself moments later in
+        // the same operation -- a verification token/email here would be genuinely pointless
+        // (dangling, never consumed) rather than just redundant.
+        if (sendVerificationEmail)
+        {
+            var rawToken = GenerateToken();
+            var tokenHash = ComputeTokenHash(rawToken);
+            await _emailTokenRepo.AddAsync(
+                EmailVerificationToken.Create(userId, tokenHash,
+                    DateTime.UtcNow.Add(_options.TokenExpiry.EmailVerificationToken), tenantId), ct);
 
-        await _unitOfWork.SaveChangesAsync(ct);
+            await _unitOfWork.SaveChangesAsync(ct);
 
-        BedrockTelemetry.Registrations.Add(1);
-        await _emailSender.SendEmailVerificationAsync(email, BuildVerificationUrl(rawToken), ct);
-        await _eventPublisher.PublishAsync(new EmailVerificationRequestedEvent(userId, email, DateTime.UtcNow), ct);
+            BedrockTelemetry.Registrations.Add(1);
+            await _emailSender.SendEmailVerificationAsync(email, BuildVerificationUrl(rawToken), ct);
+            await _eventPublisher.PublishAsync(new EmailVerificationRequestedEvent(userId, email, DateTime.UtcNow), ct);
+        }
+        else
+        {
+            await _unitOfWork.SaveChangesAsync(ct);
+            BedrockTelemetry.Registrations.Add(1);
+        }
     }
 
     public async Task ConfirmEmailAsync(string rawToken, CancellationToken ct = default)
