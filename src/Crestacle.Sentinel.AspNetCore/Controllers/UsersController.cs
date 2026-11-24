@@ -1,6 +1,7 @@
 using Crestacle.Sentinel.AspNetCore.Authorization;
 using Crestacle.Sentinel.Core.Authorization;
 using Crestacle.Sentinel.Core.DTOs;
+using Crestacle.Sentinel.Core.Exceptions;
 using Crestacle.Sentinel.Core.Interfaces;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -59,6 +60,7 @@ public sealed class UsersController(
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> AssignRole(
         Guid id,
         [FromBody] AssignRoleRequest request,
@@ -82,7 +84,15 @@ public sealed class UsersController(
             return Accepted(new { pendingAssignmentId = pending.Id });
         }
 
-        await userRepository.AddRoleAsync(id, request.RoleId, request.ExpiresOn, cancellationToken);
+        try
+        {
+            await userRepository.AddRoleAsync(id, request.RoleId, request.ExpiresOn, cancellationToken);
+        }
+        catch (SentinelNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+
         return Ok();
     }
 

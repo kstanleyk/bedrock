@@ -2,6 +2,7 @@ using Crestacle.Sentinel.Core.DTOs;
 using Crestacle.Sentinel.Core.Entities;
 using Crestacle.Sentinel.Core.Enums;
 using Crestacle.Sentinel.Core.Events;
+using Crestacle.Sentinel.Core.Exceptions;
 using Crestacle.Sentinel.Core.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -110,6 +111,19 @@ internal sealed class UserRepository(
         CancellationToken ct = default)
     {
         var tenantId = tenantContext.TenantId;
+
+        // Ownership check: roleId must actually belong to the acting tenant (or be a global/
+        // shared role, TenantId == null) before it can be attached to any user. Without this,
+        // a tenant-A actor holding only User.Update could attach an arbitrary tenant-B-only
+        // role (by guessing/enumerating its GUID) to a tenant-A user -- previously harmless
+        // only by accident, because the global-role permission-resolution bug meant a
+        // misassigned cross-tenant role resolved to no permissions either way; now that that
+        // bug is fixed (global roles correctly grant permissions), an unchecked cross-tenant
+        // assignment would be a real privilege-escalation path.
+        var roleExists = await context.Roles
+            .AnyAsync(r => r.Id == roleId && (tenantId == null || r.TenantId == tenantId || r.TenantId == null), ct);
+        if (!roleExists)
+            throw new SentinelNotFoundException($"Role {roleId} not found.");
 
         // Active = not removed and not expired.
         var activeExists = await context.UserRoles

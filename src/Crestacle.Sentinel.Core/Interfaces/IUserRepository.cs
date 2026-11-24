@@ -26,6 +26,10 @@ public interface IUserRepository
     /// Assigns the role to the user. When <paramref name="expiresOn"/> is provided the
     /// assignment is time-bound and will stop granting permissions after that UTC instant.
     /// </summary>
+    /// <exception cref="Exceptions.SentinelNotFoundException">
+    /// Thrown when <paramref name="roleId"/> does not exist, or belongs to a different tenant
+    /// than the current <c>ITenantContext</c> and is not global/shared (<c>Role.TenantId == null</c>).
+    /// </exception>
     Task AddRoleAsync(Guid userId, Guid roleId, DateTime? expiresOn = null, CancellationToken ct = default);
 
     Task RemoveRoleAsync(Guid userId, Guid roleId, CancellationToken ct = default);
