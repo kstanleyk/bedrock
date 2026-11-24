@@ -27,7 +27,7 @@ internal sealed class PendingAssignmentRepository(
             .AsNoTracking()
             .Where(pa => pa.Status    == AssignmentStatus.Pending
                       && pa.ExpiresOn > now
-                      && (tenantId   == null || pa.TenantId == tenantId))
+                      && (tenantId == null || pa.TenantId == tenantId || pa.TenantId == null))
             .OrderBy(pa => pa.RequestedOn);
 
         var total = await query.CountAsync(ct);

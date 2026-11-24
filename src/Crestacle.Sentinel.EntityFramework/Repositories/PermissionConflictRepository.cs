@@ -17,7 +17,7 @@ internal sealed class PermissionConflictRepository(
 
         return await context.PermissionConflicts
             .AsNoTracking()
-            .Where(pc => tenantId == null || pc.TenantId == tenantId)
+            .Where(pc => tenantId == null || pc.TenantId == tenantId || pc.TenantId == null)
             .OrderBy(pc => pc.PermissionIdA)
             .Select(pc => new PermissionConflictDto(pc.Id, pc.PermissionIdA, pc.PermissionIdB, pc.CreatedBy, pc.CreatedOn))
             .ToListAsync(ct);
@@ -27,11 +27,14 @@ internal sealed class PermissionConflictRepository(
     {
         var tenantId = tenantContext.TenantId;
 
-        // Get all permission IDs currently active on this role.
+        // Get all permission IDs currently active on this role. Must also see a global role's
+        // global RolePermission rows from a tenant-scoped caller (same fix as
+        // UserPermissionRepository/RoleRepository) -- otherwise SoD conflict detection silently
+        // sees an empty permission set for any global role and never flags a real conflict.
         var existing = await context.RolePermissions
             .Where(rp => rp.RoleId    == roleId
                       && rp.RemovedOn == null
-                      && (tenantId   == null || rp.TenantId == tenantId))
+                      && (tenantId == null || rp.TenantId == tenantId || rp.TenantId == null))
             .Select(rp => rp.PermissionId)
             .ToListAsync(ct);
 
@@ -40,7 +43,7 @@ internal sealed class PermissionConflictRepository(
 
         // Check if any (existing, new) pair appears in the conflict table.
         return await context.PermissionConflicts
-            .Where(pc => tenantId == null || pc.TenantId == tenantId)
+            .Where(pc => tenantId == null || pc.TenantId == tenantId || pc.TenantId == null)
             .AnyAsync(pc =>
                 (pc.PermissionIdA == newPermissionId && existing.Contains(pc.PermissionIdB)) ||
                 (pc.PermissionIdB == newPermissionId && existing.Contains(pc.PermissionIdA)), ct);

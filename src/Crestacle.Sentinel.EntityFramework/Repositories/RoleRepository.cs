@@ -22,9 +22,11 @@ internal sealed class RoleRepository(
         var tenantId    = tenantContext.TenantId;
         var searchLower = search?.ToLowerInvariant();
 
+        // Global/shared roles (TenantId == null, see Role.TenantId's own doc comment) must be
+        // visible to a tenant-scoped caller too, not just when the caller itself has no tenant.
         var query = context.Roles
             .AsNoTracking()
-            .Where(r => tenantId == null || r.TenantId == tenantId)
+            .Where(r => tenantId == null || r.TenantId == tenantId || r.TenantId == null)
             .Where(r => searchLower == null
                      || r.Name.ToLower().Contains(searchLower)
                      || (r.DisplayName != null && r.DisplayName.ToLower().Contains(searchLower)))
@@ -44,7 +46,7 @@ internal sealed class RoleRepository(
                 r.RequiresDualApproval,
                 r.RolePermissions
                     .Where(rp => rp.RemovedOn == null
-                              && (tenantId    == null || rp.TenantId == tenantId))
+                              && (tenantId == null || rp.TenantId == tenantId || rp.TenantId == null))
                     .Select(rp => new PermissionDto(
                         rp.Permission.Id,
                         rp.Permission.Feature,
@@ -62,7 +64,7 @@ internal sealed class RoleRepository(
 
         return await context.Roles
             .AsNoTracking()
-            .Where(r => r.Id == roleId && (tenantId == null || r.TenantId == tenantId))
+            .Where(r => r.Id == roleId && (tenantId == null || r.TenantId == tenantId || r.TenantId == null))
             .Select(r => new RoleDto(
                 r.Id,
                 r.Name,
@@ -71,7 +73,7 @@ internal sealed class RoleRepository(
                 r.RequiresDualApproval,
                 r.RolePermissions
                     .Where(rp => rp.RemovedOn == null
-                              && (tenantId    == null || rp.TenantId == tenantId))
+                              && (tenantId == null || rp.TenantId == tenantId || rp.TenantId == null))
                     .Select(rp => new PermissionDto(
                         rp.Permission.Id,
                         rp.Permission.Feature,

@@ -65,6 +65,53 @@ public sealed class UserPermissionRepositoryTests
         result.Should().ContainSingle().Which.Should().Be("Permission.Invoice.Read");
     }
 
+    // Tenant-scoped context — matches a real multi-tenant deployment.
+    private static ITenantContext TenantScoped(string tenantId)
+    {
+        var ctx = Substitute.For<ITenantContext>();
+        ctx.TenantId.Returns(tenantId);
+        return ctx;
+    }
+
+    [Fact]
+    public async Task GetPermissionsForUserAsync_GlobalRoleViaTenantScopedUser_StillResolvesItsPermissions()
+    {
+        // The library's own supported bootstrap (SentinelSeeder.SeedRolesAsync) creates roles
+        // and RolePermission rows with TenantId left null (global/shared, per Role.TenantId's
+        // own doc comment) — but the user themselves, and their UserRole assignment, DO belong
+        // to a real tenant, exactly as a real multi-tenant deployment using the seeded roles
+        // would have. A tenant-scoped caller must still see the global role's permissions.
+        await using var ctx = BuildContext();
+
+        const string tenantId = "tenant-a";
+        var user = User.Create("identity-tenant-a", "user@tenant-a.test", tenantId: tenantId);
+        var role = Role.Create("Admin", "Administrator", RoleType.Default, tenantId: null); // global
+        var perm = Permission.Create(new AppPermission("Invoice", "Read", "Finance", "Read invoices"));
+
+        ctx.Users.Add(user);
+        ctx.Roles.Add(role);
+        ctx.Permissions.Add(perm);
+        ctx.UserRoles.Add(new UserRole
+        {
+            Id = Guid.NewGuid(), UserId = user.Id, RoleId = role.Id,
+            TenantId = tenantId, CreatedOn = DateTime.UtcNow,
+        });
+        ctx.RolePermissions.Add(new RolePermission
+        {
+            RoleId = role.Id, PermissionId = perm.Id,
+            TenantId = null, CreatedOn = DateTime.UtcNow,
+        });
+        await ctx.SaveChangesAsync();
+
+        var repo = new UserPermissionRepository(ctx, NullCache(), TenantScoped(tenantId), NullLog());
+        var result = await repo.GetPermissionsForUserAsync("identity-tenant-a");
+
+        result.Should().ContainSingle().Which.Should().Be("Permission.Invoice.Read",
+            "a global role's permissions must resolve for a real tenant-scoped user — this is " +
+            "exactly the seeded-roles + multi-tenant combination Crestacle.Bedrock.Sentinel exists " +
+            "to support");
+    }
+
     [Fact]
     public async Task GetPermissionsForUserAsync_ReturnsEmpty_ForUnknownUser()
     {

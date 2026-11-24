@@ -46,11 +46,16 @@ internal sealed class UserPermissionRepository(
         // Expand with inherited roles from the hierarchy.
         var allRoleIds = await ResolveHierarchyAsync(directRoleIds, tenantId, ct);
 
-        // Resolve permissions for all collected roles (active assignments only).
+        // Resolve permissions for all collected roles (active assignments only). A global
+        // RolePermission row (TenantId == null, see Role.TenantId's own doc comment for the
+        // same "global/shared" concept) must always be visible to a tenant-scoped caller too --
+        // not just when the CALLER has no tenant. Without the trailing `|| rp.TenantId == null`,
+        // every global role's permissions silently resolved to nothing for any tenant-scoped
+        // user, breaking the seeded-roles bootstrap this library ships by default.
         var permissions = await context.RolePermissions
             .Where(rp => allRoleIds.Contains(rp.RoleId)
                       && rp.RemovedOn == null
-                      && (tenantId   == null || rp.TenantId == tenantId))
+                      && (tenantId == null || rp.TenantId == tenantId || rp.TenantId == null))
             .Select(rp => rp.Permission.Id)
             .Distinct()
             .ToListAsync(ct);
@@ -79,7 +84,7 @@ internal sealed class UserPermissionRepository(
 
             var parentIds = await context.Roles
                 .Where(r => batch.Contains(r.Id) && r.ParentRoleId.HasValue)
-                .Where(r => tenantId == null || r.TenantId == tenantId)
+                .Where(r => tenantId == null || r.TenantId == tenantId || r.TenantId == null)
                 .Select(r => r.ParentRoleId!.Value)
                 .ToListAsync(ct);
 
