@@ -31,6 +31,7 @@ internal sealed class UserCredentialConfiguration : IEntityTypeConfiguration<Use
         builder.Property(e => e.TotpConfirmed).HasColumnName("totp_confirmed").IsRequired();
         builder.Property(e => e.FailedLoginAttempts).HasColumnName("failed_login_attempts").IsRequired();
         builder.Property(e => e.LockoutEnd).HasColumnName("lockout_end");
+        builder.Property(e => e.IsAdminLocked).HasColumnName("is_admin_locked").IsRequired();
         builder.Property(e => e.MfaGracePeriodEndsAt).HasColumnName("mfa_grace_period_ends_at");
         builder.Property(e => e.PasswordExpiresAt).HasColumnName("password_expires_at");
         builder.Property(e => e.PasswordChangedAt).HasColumnName("password_changed_at");

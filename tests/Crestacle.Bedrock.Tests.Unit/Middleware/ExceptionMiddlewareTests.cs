@@ -64,4 +64,36 @@ public sealed class ExceptionMiddlewareTests
         body.Code.Should().Be(BedrockErrorCodes.Forbidden);
         body.Errors.Should().ContainSingle(e => e == "nope");
     }
+
+    [Fact]
+    public async Task InvokeAsync_AdminLockedAccount_Returns423WithGenericMessage_NoRawSentinelDate()
+    {
+        // The 100-year admin-lock sentinel (see UserCredential.AdminLock) — if this leaked into the
+        // response, "2126" would appear in the body.
+        var sentinelLockoutEnd = DateTime.UtcNow.AddYears(100);
+
+        var (context, body) = await InvokeAsync(
+            _ => throw new BedrockAccountLockedException(sentinelLockoutEnd, isAdminLocked: true));
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status423Locked);
+        body.Success.Should().BeFalse();
+        body.Code.Should().Be(BedrockErrorCodes.AccountLocked);
+        body.Errors.Should().ContainSingle(e => e == "Your account has been locked by an administrator. Contact support.");
+        body.Errors.Should().NotContain(e => e.Contains(sentinelLockoutEnd.Year.ToString()));
+        body.Errors.Should().NotContain(e => e.Contains(sentinelLockoutEnd.ToString("O")));
+    }
+
+    [Fact]
+    public async Task InvokeAsync_TimedLockedAccount_StillIncludesLockoutDate()
+    {
+        // Genuine (non-admin) timed lockouts must keep surfacing the real expiry — only the
+        // admin-locked sentinel date is suppressed.
+        var lockoutEnd = DateTime.UtcNow.AddMinutes(15);
+
+        var (context, body) = await InvokeAsync(
+            _ => throw new BedrockAccountLockedException(lockoutEnd, isAdminLocked: false));
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status423Locked);
+        body.Errors.Should().ContainSingle(e => e == $"Account is locked until {lockoutEnd:O}.");
+    }
 }

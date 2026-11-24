@@ -569,7 +569,7 @@ internal sealed partial class CredentialService : ICredentialService
             ?? throw new BedrockValidationException("User not found.");
 
         if (credential.IsLockedOut())
-            throw new BedrockAccountLockedException(credential.LockoutEnd!.Value);
+            throw new BedrockAccountLockedException(credential.LockoutEnd!.Value, credential.IsAdminLocked);
 
         var verified = false;
 
@@ -615,7 +615,7 @@ internal sealed partial class CredentialService : ICredentialService
             {
                 await _eventPublisher.PublishAsync(
                     new AccountLockedEvent(credential.UserId, credential.LockoutEnd!.Value, ip, DateTime.UtcNow), ct);
-                throw new BedrockAccountLockedException(credential.LockoutEnd!.Value);
+                throw new BedrockAccountLockedException(credential.LockoutEnd!.Value, credential.IsAdminLocked);
             }
 
             throw new BedrockValidationException("The verification code is incorrect.");
