@@ -103,6 +103,32 @@ public sealed class MagicLinkTests : IDisposable
     }
 
     [Fact]
+    public async Task VerifyMagicLink_LockedOutAccount_Returns423WithRetryAfter()
+    {
+        const string email = "ml-locked@example.com";
+        await RegisterAndActivateAsync(email);
+        await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/magic-link",
+            new MagicLinkRequest(email));
+
+        var rawToken = GetMagicLinkRawToken(email);
+
+        for (var i = 0; i < 5; i++)
+        {
+            await _client.PostAsJsonAsync(
+                "/api/bedrock/auth/login",
+                new LoginRequest(email, "WrongPassword1!"));
+        }
+
+        var response = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/magic-link/verify",
+            new VerifyMagicLinkRequest(rawToken));
+
+        response.StatusCode.Should().Be((HttpStatusCode)423);
+        response.Headers.Should().ContainKey("Retry-After");
+    }
+
+    [Fact]
     public async Task VerifyMagicLink_TokenIsMarkedUsedAfterConsumption()
     {
         const string email = "ml-used@example.com";
