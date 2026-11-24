@@ -73,5 +73,58 @@ public sealed class MemoryBedrockCacheTests : IDisposable
         result.Should().BeNull();
     }
 
+    // -------------------------------------------------------------------------
+    // TryAcquireLockAsync / ReleaseLockAsync
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task TryAcquireLockAsync_KeyNotHeld_AcquiresAndReturnsTrue()
+    {
+        var acquired = await _cache.TryAcquireLockAsync("lock-key", TimeSpan.FromSeconds(5));
+
+        acquired.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TryAcquireLockAsync_AlreadyHeld_ReturnsFalse()
+    {
+        await _cache.TryAcquireLockAsync("lock-key", TimeSpan.FromSeconds(5));
+
+        var secondAttempt = await _cache.TryAcquireLockAsync("lock-key", TimeSpan.FromSeconds(5));
+
+        secondAttempt.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReleaseLockAsync_ThenTryAcquire_SucceedsAgain()
+    {
+        await _cache.TryAcquireLockAsync("lock-key", TimeSpan.FromSeconds(5));
+        await _cache.ReleaseLockAsync("lock-key");
+
+        var reacquired = await _cache.TryAcquireLockAsync("lock-key", TimeSpan.FromSeconds(5));
+
+        reacquired.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TryAcquireLockAsync_ConcurrentCallersSharingTheUnderlyingCache_ExactlyOneWins()
+    {
+        // Simulates what AddSingleton (correct) vs AddScoped (the bug fixed in
+        // BedrockEntityFrameworkServiceCollectionExtensions) actually differ on: two
+        // MemoryBedrockCache INSTANCES sharing the same underlying IMemoryCache (as every
+        // instance always does, singleton or not), racing for the same lock key. The NX-gate
+        // guarantee (_cache.TryGetValue + _cache.Set) is atomic because both calls go through
+        // the shared IMemoryCache, independent of which MemoryBedrockCache instance calls it --
+        // this proves the underlying store-level atomicity; the DI lifetime bug this regression
+        // guards is a SEPARATE concern, covered by BedrockCacheRegistrationTests.
+        var second = new MemoryBedrockCache(_memoryCache);
+
+        var results = await Task.WhenAll(
+            Task.Run(() => _cache.TryAcquireLockAsync("race-key", TimeSpan.FromSeconds(5))),
+            Task.Run(() => second.TryAcquireLockAsync("race-key", TimeSpan.FromSeconds(5))));
+
+        results.Count(r => r).Should().Be(1, "exactly one of two concurrent racers must win an NX-style lock");
+    }
+
     public void Dispose() => _memoryCache.Dispose();
 }

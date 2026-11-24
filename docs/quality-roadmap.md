@@ -40,7 +40,15 @@ Each item below is filed under the phase that fixes it. File:line references are
 - [ ] **D13. Sync-over-async in the HIBP validator.** `HaveIBeenPwnedPasswordValidator.cs:34` implements the sync `IsValid` via `Task.Run(() => IsBreachedAsync(...)).GetAwaiter().GetResult()`, burning a thread-pool thread per registration for up to the 3-second timeout under load.
 - [ ] **D14. No catch-all exception handler.** `BedrockExceptionMiddleware.InvokeAsync` only catches the `BedrockException` family. Any other unhandled exception — such as the DB-level overflow fixed ad hoc in `c7a6364` — still propagates as a raw, unformatted 500. A generic `catch (Exception)` fallback would catch this entire class of bug centrally instead of per call-site. (The existing `catch (Exception ex) when (ex is BedrockException bex)` on line 63 is also just an awkward spelling of `catch (BedrockException bex)` — simplify while touching this.)
 - [ ] **D15. No input validation on request DTOs.** `Models/Requests.cs` has zero `[Required]` / `[EmailAddress]` / length constraints across roughly 25 request records (`RegisterRequest`, `LoginRequest`, etc.). Malformed bodies pass model binding and only fail deep in service logic, producing inconsistent 400 responses.
-- [ ] **D16. Wasteful cache registration.** `MemoryBedrockCache` / `MemoryPermissionCache` are registered `AddScoped` while wrapping an already-singleton `IMemoryCache` — harmless but allocates per request for no reason.
+- [x] **D16. Wasteful cache registration — and worse than "harmless": a real correctness bug.**
+  `MemoryBedrockCache` was registered `AddScoped` while wrapping an already-singleton
+  `IMemoryCache`; `MemoryPermissionCache` was already `AddSingleton` (this item's original
+  text was wrong about that half). Beyond the wasted per-request allocation, `MemoryBedrockCache
+  .TryAcquireLockAsync` locks on an instance field (`_lockGate`) — with `AddScoped`, every
+  request got its OWN `_lockGate`, so the `lock` statement never actually serialized two
+  concurrent callers against each other, silently defeating the documented single-node NX-gate
+  guarantee (`MaxConcurrentSessions` enforcement, JTI-blacklist atomicity) even within one
+  process. Fixed: `AddSingleton<IBedrockCache, MemoryBedrockCache>()`.
 
 ### P3 — Test & documentation debt
 
@@ -80,7 +88,7 @@ Each item below is filed under the phase that fixes it. File:line references are
 - [ ] Make `HaveIBeenPwnedPasswordValidator` fully async end-to-end (add an async validator interface, or document the sync entrypoint as a thin intentional bridge with a bounded, documented worst case).
 - [ ] Add a catch-all `catch (Exception)` → structured 500 fallback in `BedrockExceptionMiddleware`, logged with correlation ID; simplify the existing `when (ex is BedrockException)` clause to a direct `catch (BedrockException)`.
 - [ ] Add `[Required]`/`[EmailAddress]`/length validation attributes to `Models/Requests.cs`, or adopt FluentValidation consistently if attribute validation doesn't cover a case.
-- [ ] Change `MemoryBedrockCache`/`MemoryPermissionCache` registration from `AddScoped` to `AddSingleton`.
+- [x] Change `MemoryBedrockCache` registration from `AddScoped` to `AddSingleton` (`MemoryPermissionCache` was already `AddSingleton`).
 
 ### Phase Q5 — Documentation currency + process (targets: D20, and keeping the above from regressing)
 - [ ] Update `docs/security.md` with rotation-chain revocation behavior and `docs/configuration-reference.md` with the cookie `SameSite` option.
