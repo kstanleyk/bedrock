@@ -169,6 +169,44 @@ public sealed class CredentialServiceTests : IDisposable
         _context.PasswordResetTokens.Any(t => t.UserId == userId).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task RequestPasswordResetAsync_UpToSendLimit_CreatesATokenEachTime()
+    {
+        // Default OtpOptions.MaxSendsPerWindow is 5 — all 5 calls here are within the window and
+        // must each succeed and create their own reset token, same as OTP-send call sites.
+        var userId = Guid.NewGuid();
+        const string email = "reset-within-limit@example.com";
+        await _service.RegisterAsync(userId, email, ValidPassword);
+
+        for (var i = 0; i < 5; i++)
+        {
+            var act = async () => await _service.RequestPasswordResetAsync(email);
+            await act.Should().NotThrowAsync();
+        }
+
+        _context.PasswordResetTokens.Count(t => t.UserId == userId).Should().Be(5);
+    }
+
+    [Fact]
+    public async Task RequestPasswordResetAsync_SixthCallWithinWindow_IsRateLimitedWithoutLeakingExistence()
+    {
+        // The 6th call within the window must be silently dropped by OtpSendLimiter — same
+        // "always OK, no enumeration" response shape as an unknown email gets (no throw, no new
+        // token, no email sent) rather than surfacing a distinct rate-limited error that would
+        // let an attacker distinguish "exists and rate-limited" from "doesn't exist".
+        var userId = Guid.NewGuid();
+        const string email = "reset-rate-limited@example.com";
+        await _service.RegisterAsync(userId, email, ValidPassword);
+
+        for (var i = 0; i < 5; i++)
+            await _service.RequestPasswordResetAsync(email);
+
+        var act = async () => await _service.RequestPasswordResetAsync(email);
+        await act.Should().NotThrowAsync();
+
+        _context.PasswordResetTokens.Count(t => t.UserId == userId).Should().Be(5);
+    }
+
     // -------------------------------------------------------------------------
     // ResetPasswordAsync
     // -------------------------------------------------------------------------

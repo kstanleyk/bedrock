@@ -237,7 +237,21 @@ internal sealed partial class CredentialService : ICredentialService
         var credential = await _credentialRepo.GetByEmailAsync(email, ct);
 
         if (credential is null)
+            return; // Always OK — no enumeration
+
+        try
+        {
+            await _otpSendLimiter.GuardAsync(credential.UserId, OtpPurpose.PasswordReset, ct);
+        }
+        catch (BedrockRateLimitException)
+        {
+            // Always OK — no enumeration. The rate limit is enforced by silently dropping the
+            // reset email rather than surfacing a 429, which would otherwise let an attacker
+            // distinguish "email exists and is rate-limited" from "email doesn't exist" purely
+            // from the HTTP response, defeating the existence-hiding discipline this endpoint
+            // otherwise relies on (see RefreshTokenService.RevokeAsync's own comment on this).
             return;
+        }
 
         await _resetTokenRepo.InvalidateAllForUserAsync(credential.UserId, ct);
 
