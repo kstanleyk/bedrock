@@ -48,7 +48,12 @@ internal static class BedrockJwtHelper
             ValidateIssuerSigningKey = true,
             IssuerSigningKeys = keys,
             NameClaimType = "user_id",
-            RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+            // JwtService.GenerateAccessToken embeds roles under the literal "roles" claim key
+            // as a JSON array (see its own comment for why: ClaimTypes.Role's default outbound
+            // mapping produces a shape crestacle-web's client contract doesn't expect), NOT
+            // under ClaimTypes.Role -- RoleClaimType must match that or User.IsInRole()/
+            // [Authorize(Roles = ...)] silently never match any role on a Bedrock-issued token.
+            RoleClaimType = "roles",
         };
     }
 }
