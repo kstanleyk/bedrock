@@ -25,6 +25,7 @@ internal sealed class StepUpService : IStepUpService
     private readonly ISmsSender _smsSender;
     private readonly IBedrockEventPublisher _eventPublisher;
     private readonly OtpSendLimiter _otpSendLimiter;
+    private readonly StepUpAttemptLimiter _stepUpAttemptLimiter;
     private readonly BedrockOptions _options;
 
     public StepUpService(
@@ -40,6 +41,7 @@ internal sealed class StepUpService : IStepUpService
         ISmsSender smsSender,
         IBedrockEventPublisher eventPublisher,
         OtpSendLimiter otpSendLimiter,
+        StepUpAttemptLimiter stepUpAttemptLimiter,
         IOptions<BedrockOptions> options)
     {
         _credentialRepo = credentialRepo;
@@ -54,6 +56,7 @@ internal sealed class StepUpService : IStepUpService
         _smsSender = smsSender;
         _eventPublisher = eventPublisher;
         _otpSendLimiter = otpSendLimiter;
+        _stepUpAttemptLimiter = stepUpAttemptLimiter;
         _options = options.Value;
     }
 
@@ -141,8 +144,25 @@ internal sealed class StepUpService : IStepUpService
             await _auditRepo.AddAsync(
                 AuditEntry.Create(AuditEventType.StepUpFailed, ip, userAgent,
                     userId, tenantId: credential.TenantId), ct);
+
+            // Throttle guessing against this specific challenge. Once the max-attempts
+            // threshold is exceeded, invalidate the challenge outright (rather than merely
+            // continuing to reject) so the attacker can't keep guessing until it naturally
+            // expires. The RowVersion/xmin concurrency token on StepUpChallenge (added for the
+            // TOCTOU fix) makes this save safe even if a concurrent request is also failing.
+            var limitExceeded = await _stepUpAttemptLimiter.RecordFailureAndCheckAsync(challengeId, ct);
+            if (limitExceeded)
+            {
+                challenge.MarkUsed();
+                await _challengeRepo.UpdateAsync(challenge, ct);
+            }
+
             await _unitOfWork.SaveChangesAsync(ct);
             await _eventPublisher.PublishAsync(new StepUpFailedEvent(userId, ip, DateTime.UtcNow), ct);
+
+            if (limitExceeded)
+                throw new BedrockRateLimitException(_options.TokenExpiry.StepUpToken);
+
             throw new BedrockValidationException("The step-up code is incorrect.");
         }
 

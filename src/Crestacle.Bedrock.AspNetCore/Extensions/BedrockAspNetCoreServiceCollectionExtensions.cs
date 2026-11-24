@@ -111,6 +111,7 @@ public static class BedrockAspNetCoreServiceCollectionExtensions
 
         // --- Step-up services ---
         services.AddScoped<IStepUpService, StepUpService>();
+        services.AddScoped<StepUpAttemptLimiter>();
 
         // --- Token services ---
         services.AddScoped<ITokenService, JwtService>();
