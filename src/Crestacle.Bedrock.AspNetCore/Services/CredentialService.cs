@@ -104,7 +104,9 @@ internal sealed partial class CredentialService : ICredentialService
     // Registration & email
     // -------------------------------------------------------------------------
 
-    public async Task RegisterAsync(Guid userId, string email, string password, string? tenantId = null, CancellationToken ct = default)
+    public async Task RegisterAsync(
+        Guid userId, string email, string password, string? tenantId = null,
+        bool sendVerificationEmail = true, CancellationToken ct = default)
     {
         if (!_validator.IsValid(password, out var errors))
             throw new BedrockValidationException(errors);
@@ -118,17 +120,29 @@ internal sealed partial class CredentialService : ICredentialService
 
         await _historyRepo.AddAsync(PasswordHistory.Create(userId, hash, tenantId), ct);
 
-        var rawToken = GenerateToken();
-        var tokenHash = ComputeTokenHash(rawToken);
-        await _emailTokenRepo.AddAsync(
-            EmailVerificationToken.Create(userId, tokenHash,
-                DateTime.UtcNow.Add(_options.TokenExpiry.EmailVerificationToken), tenantId), ct);
+        // Invitation acceptance (InvitationService.AcceptInvitationAsync) registers with
+        // sendVerificationEmail: false and force-confirms the email itself moments later in
+        // the same operation -- a verification token/email here would be genuinely pointless
+        // (dangling, never consumed) rather than just redundant.
+        if (sendVerificationEmail)
+        {
+            var rawToken = GenerateToken();
+            var tokenHash = ComputeTokenHash(rawToken);
+            await _emailTokenRepo.AddAsync(
+                EmailVerificationToken.Create(userId, tokenHash,
+                    DateTime.UtcNow.Add(_options.TokenExpiry.EmailVerificationToken), tenantId), ct);
 
-        await _unitOfWork.SaveChangesAsync(ct);
+            await _unitOfWork.SaveChangesAsync(ct);
 
-        BedrockTelemetry.Registrations.Add(1);
-        await _emailSender.SendEmailVerificationAsync(email, BuildVerificationUrl(rawToken), ct);
-        await _eventPublisher.PublishAsync(new EmailVerificationRequestedEvent(userId, email, DateTime.UtcNow), ct);
+            BedrockTelemetry.Registrations.Add(1);
+            await _emailSender.SendEmailVerificationAsync(email, BuildVerificationUrl(rawToken), ct);
+            await _eventPublisher.PublishAsync(new EmailVerificationRequestedEvent(userId, email, DateTime.UtcNow), ct);
+        }
+        else
+        {
+            await _unitOfWork.SaveChangesAsync(ct);
+            BedrockTelemetry.Registrations.Add(1);
+        }
     }
 
     public async Task ConfirmEmailAsync(string rawToken, CancellationToken ct = default)
@@ -327,6 +341,10 @@ internal sealed partial class CredentialService : ICredentialService
 
         if (credential.IsLockedOut())
         {
+            // Constant-time: run the same Argon2id verify the wrong-password/unknown-user
+            // branches pay for, so a locked-out account's response isn't measurably faster
+            // and distinguishable from "wrong password" / "no such user" via timing.
+            _ = _hasher.Verify(password, credential.PasswordHash);
             await IncrementIpFailCountAsync(ip, ct);
             await _auditRepo.AddAsync(
                 AuditEntry.Create(AuditEventType.LoginFailed, ip, userAgent,
@@ -356,6 +374,8 @@ internal sealed partial class CredentialService : ICredentialService
                 LogAccountLocked(_logger, credential.UserId, credential.TenantId);
                 BedrockTelemetry.AccountLockouts.Add(1);
                 await _emailSender.SendAccountLockedAsync(email, credential.LockoutEnd!.Value, ct);
+                await _eventPublisher.PublishAsync(
+                    new AccountLockedEvent(credential.UserId, credential.LockoutEnd!.Value, ip, DateTime.UtcNow), ct);
                 BedrockTelemetry.LoginFailures.Add(1);
                 activity?.SetTag("bedrock.result", "locked");
                 return FirstFactorResult.Locked(credential.UserId, credential.LockoutEnd!.Value);
@@ -439,7 +459,7 @@ internal sealed partial class CredentialService : ICredentialService
             await _unitOfWork.SaveChangesAsync(ct);
 
             if (wasLocked)
-                await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
             await _eventPublisher.PublishAsync(
                 new LoginSucceededEvent(credential.UserId, ip, credential.MfaEnabled, DateTime.UtcNow), ct);
 
@@ -462,7 +482,7 @@ internal sealed partial class CredentialService : ICredentialService
             {
                 await _unitOfWork.SaveChangesAsync(ct);
                 if (wasLocked)
-                    await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                    await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
                 await _eventPublisher.PublishAsync(
                     new LoginSucceededEvent(credential.UserId, ip, false, DateTime.UtcNow), ct);
                 var enrollmentToken = _tokenService.GenerateEnrollmentToken(credential.UserId);
@@ -479,7 +499,7 @@ internal sealed partial class CredentialService : ICredentialService
                 await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
                 await _unitOfWork.SaveChangesAsync(ct);
                 if (wasLocked)
-                    await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                    await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
                 await _eventPublisher.PublishAsync(
                     new LoginSucceededEvent(credential.UserId, ip, false, DateTime.UtcNow), ct);
                 activity?.SetTag("bedrock.mfa_required", false);
@@ -491,7 +511,7 @@ internal sealed partial class CredentialService : ICredentialService
             await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
             await _unitOfWork.SaveChangesAsync(ct);
             if (wasLocked)
-                await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+                await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
             await _eventPublisher.PublishAsync(
                 new LoginSucceededEvent(credential.UserId, ip, false, DateTime.UtcNow), ct);
             activity?.SetTag("bedrock.mfa_required", false);
@@ -505,7 +525,7 @@ internal sealed partial class CredentialService : ICredentialService
         await _unitOfWork.SaveChangesAsync(ct);
 
         if (wasLocked)
-            await _eventPublisher.PublishAsync(new Crestacle.Bedrock.Core.Events.AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
+            await _eventPublisher.PublishAsync(new AccountUnlockedEvent(credential.UserId, DateTime.UtcNow), ct);
         await _eventPublisher.PublishAsync(
             new LoginSucceededEvent(credential.UserId, ip, credential.MfaEnabled, DateTime.UtcNow), ct);
 
@@ -519,7 +539,7 @@ internal sealed partial class CredentialService : ICredentialService
     // -------------------------------------------------------------------------
 
     public async Task<Guid> VerifyMfaAsync(
-        string challengeToken, string code, string ip, string userAgent,
+        string challengeToken, string code, string ip, string userAgent, string fingerprintHash,
         CancellationToken ct = default)
     {
         var challengeId = _tokenService.ValidateChallengeToken(challengeToken)
@@ -578,7 +598,11 @@ internal sealed partial class CredentialService : ICredentialService
             await _unitOfWork.SaveChangesAsync(ct);
 
             if (credential.IsLockedOut())
+            {
+                await _eventPublisher.PublishAsync(
+                    new AccountLockedEvent(credential.UserId, credential.LockoutEnd!.Value, ip, DateTime.UtcNow), ct);
                 throw new BedrockAccountLockedException(credential.LockoutEnd!.Value);
+            }
 
             throw new BedrockValidationException("The verification code is incorrect.");
         }
@@ -589,10 +613,12 @@ internal sealed partial class CredentialService : ICredentialService
             AuditEntry.Create(AuditEventType.MfaChallengeSucceeded, ip, userAgent,
                 challenge.UserId, tenantId: credential.TenantId), ct);
 
-        // Record device on successful MFA completion — staged alongside challenge + audit
-        var fingerprint = _anomalyDetector.ComputeFingerprint(userAgent, ip);
+        // Record device on successful MFA completion — staged alongside challenge + audit.
+        // Uses the SAME client-supplied fingerprintHash LoginFirstFactorAsync's anomaly check
+        // is keyed on (not AnomalyDetector.ComputeFingerprint(userAgent, ip), a different value
+        // space) so a device recorded here is actually recognized by a later plain-password login.
         var ipBlock = _anomalyDetector.ExtractIpBlock(ip);
-        await _anomalyDetector.RecordDeviceAsync(challenge.UserId, fingerprint, ipBlock, userAgent, ct);
+        await _anomalyDetector.RecordDeviceAsync(challenge.UserId, fingerprintHash, ipBlock, userAgent, ct);
 
         await _unitOfWork.SaveChangesAsync(ct);
 
@@ -819,7 +845,8 @@ internal sealed partial class CredentialService : ICredentialService
     }
 
     public async Task<FirstFactorResult> VerifyMagicLinkAsync(
-        string rawToken, string ipAddress, string userAgent, CancellationToken ct = default)
+        string rawToken, string ipAddress, string userAgent, string fingerprintHash,
+        CancellationToken ct = default)
     {
         var tokenHash = ComputeTokenHash(rawToken);
         var token = await _magicLinkTokenRepo.GetByHashAsync(tokenHash, ct);
@@ -888,20 +915,22 @@ internal sealed partial class CredentialService : ICredentialService
                 return FirstFactorResult.EnrollmentRequired(credential.UserId, enrollmentToken);
             }
 
-            var fingerprint = _anomalyDetector.ComputeFingerprint(userAgent, ipAddress);
+            // Uses the client-supplied fingerprintHash (same value space LoginFirstFactorAsync's
+            // anomaly check is keyed on), not AnomalyDetector.ComputeFingerprint(userAgent, ip) --
+            // see VerifyMfaAsync's matching comment for why that distinction matters.
             var ipBlock = _anomalyDetector.ExtractIpBlock(ipAddress);
 
             if (!credential.MfaGracePeriodEndsAt.HasValue)
             {
                 var gracePeriodEnd = _mfaPolicy.SetGracePeriod(credential);
                 await _credentialRepo.UpdateAsync(credential, ct);
-                await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprint, ipBlock, userAgent, ct);
+                await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
                 await _unitOfWork.SaveChangesAsync(ct);
                 LogMagicLinkConsumed(_logger, credential.UserId, credential.TenantId);
                 return FirstFactorResult.SuccessInGracePeriod(credential.UserId, gracePeriodEnd);
             }
 
-            await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprint, ipBlock, userAgent, ct);
+            await _anomalyDetector.RecordDeviceAsync(credential.UserId, fingerprintHash, ipBlock, userAgent, ct);
             await _unitOfWork.SaveChangesAsync(ct);
             LogMagicLinkConsumed(_logger, credential.UserId, credential.TenantId);
             return FirstFactorResult.SuccessInGracePeriod(credential.UserId, credential.MfaGracePeriodEndsAt!.Value);

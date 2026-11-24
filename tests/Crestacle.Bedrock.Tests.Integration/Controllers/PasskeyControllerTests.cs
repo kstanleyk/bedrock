@@ -132,7 +132,45 @@ public sealed class PasskeyControllerTests : IDisposable
         authResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadAsync<LoginResponse>(authResponse);
         body.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        body.Data.RefreshToken.Should().NotBeNullOrEmpty();
+
+        // HttpOnly-cookie hardening: the refresh token is never in the JSON body.
+        body.Data.RefreshToken.Should().BeNull();
+        authResponse.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task CompleteAuthentication_RefreshCookie_HonorsConfiguredSameSitePolicy()
+    {
+        // SessionOptions.RefreshCookieSameSite defaults to None -- this controller previously
+        // hardcoded Strict unconditionally, diverging from BedrockAuthController's login cookie
+        // even with zero custom configuration (see docs/quality-roadmap.md D2).
+        var email = "pk-samesite@example.com";
+        var token = await RegisterActivateAndLoginAsync(email);
+        UseBearer(token);
+
+        await _client.PostAsync("/api/bedrock/passkeys/register/begin", null);
+        await _client.PostAsJsonAsync(
+            "/api/bedrock/passkeys/register/complete",
+            new CompletePasskeyRegistrationRequest(
+                FakeFido2.BuildFakeAttestationResponseJson(), null));
+
+        ClearBearer();
+
+        await _client.PostAsJsonAsync(
+            "/api/bedrock/passkeys/authenticate/begin",
+            new BeginPasskeyAuthenticationRequest(email));
+
+        var authResponse = await _client.PostAsJsonAsync(
+            "/api/bedrock/passkeys/authenticate/complete",
+            new CompletePasskeyAuthenticationRequest(
+                FakeFido2.BuildFakeAssertionResponseJson()));
+
+        authResponse.Headers.TryGetValues("Set-Cookie", out var setCookieHeaders).Should().BeTrue();
+        var refreshCookieHeader = setCookieHeaders!.First(
+            h => h.StartsWith($"{RefreshCookieTestHelpers.CookieName}=", StringComparison.Ordinal));
+
+        refreshCookieHeader.Should().ContainEquivalentOf("samesite=none",
+            "the configured RefreshCookieSameSite policy must be honored, not hardcoded Strict");
     }
 
     // -------------------------------------------------------------------------

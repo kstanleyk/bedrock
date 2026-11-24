@@ -78,8 +78,8 @@ Controls MFA enrollment policy.
 | Property | Type | Default | Notes |
 |---|---|---|---|
 | `Issuer` | `string` | `""` | Display name shown in TOTP authenticator apps (e.g. Google Authenticator). |
-| `GracePeriodDays` | `int` | `14` | Days a user in a mandatory-MFA role can skip enrollment before it is enforced. |
-| `MandatoryRoles` | `IList<string>` | `[]` | Users assigned to any of these roles must enrol MFA. |
+| `GracePeriodDays` | `int` | `14` | Days every user can skip enrollment before mandatory MFA is enforced, once `MandatoryRoles` is non-empty. |
+| `MandatoryRoles` | `IList<string>` | `[]` | **Not per-role scoped despite the name.** A non-empty list makes MFA mandatory for *every* user — Bedrock.Core has no concept of roles to check membership against. Treat as a boolean "require MFA for everyone" switch. |
 | `BackupCodeCount` | `int` | `10` | Number of single-use recovery codes generated at MFA enrolment. |
 
 ---

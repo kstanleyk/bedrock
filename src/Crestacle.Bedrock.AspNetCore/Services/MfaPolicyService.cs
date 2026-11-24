@@ -26,7 +26,9 @@ internal sealed class MfaPolicyService : IMfaPolicyService
     /// Realm-aware, same mechanism as <see cref="ComputeGracePeriodEnd"/>. The parameter is
     /// unused deliberately, matching the pre-existing behavior this overrides (a global gate,
     /// not evaluated per-credential) — realm-scoping only changes WHICH global gate applies to
-    /// the current request, not whether individual credentials are consulted.
+    /// the current request, not whether individual credentials are consulted. See
+    /// <see cref="MfaOptions.MandatoryRoles"/>'s doc comment: despite the name, this is NOT
+    /// per-role scoped today — a non-empty list is a global "mandatory for everyone" switch.
     /// </summary>
     public bool IsMfaRequired(UserCredential credential)
     {

@@ -4,15 +4,15 @@ Breached-password detection for Crestacle Bedrock via the [Have I Been Pwned](ht
 
 ## What's in this package
 
-- **`HibpPasswordValidator`** — `IPasswordValidator` implementation that queries HIBP using the k-anonymity SHA-1 prefix approach (your full password hash is **never** sent to the API)
-- **`AddHaveIBeenPwnedPasswordValidator()`** — DI registration extension that registers the validator and its `HttpClient`
+- **`HaveIBeenPwnedPasswordValidator`** — `IPasswordValidator` implementation that queries HIBP using the k-anonymity SHA-1 prefix approach (your full password hash is **never** sent to the API)
+- **`WithHaveIBeenPwnedPasswordValidator()`** — DI registration extension that registers the validator and its `HttpClient`, wrapping whatever `IPasswordValidator` is already registered (the Bedrock default, or your own) as the inner complexity/history check
 
 ## Quick start
 
 ```csharp
 builder.Services
     .AddBedrockAspNetCore(opts => { ... })
-    .AddHaveIBeenPwnedPasswordValidator();
+    .WithHaveIBeenPwnedPasswordValidator();
 ```
 
 Once registered, the validator is automatically invoked during registration and password-change flows managed by `Crestacle.Bedrock.AspNetCore`.

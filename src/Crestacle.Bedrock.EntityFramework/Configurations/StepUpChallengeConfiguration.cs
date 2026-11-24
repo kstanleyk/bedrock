@@ -26,6 +26,10 @@ internal sealed class StepUpChallengeConfiguration : IEntityTypeConfiguration<St
         builder.Property(e => e.TenantId).HasColumnName("tenant_id").HasMaxLength(64);
         builder.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
 
+        builder.Property(e => e.RowVersion)
+            .HasColumnName("row_version")
+            .IsRowVersion();
+
         builder.HasIndex(e => e.UserId)
             .HasDatabaseName("ix_step_up_challenges_user");
     }

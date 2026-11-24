@@ -173,7 +173,7 @@ public sealed class BedrockAuthController : ControllerBase
         var fingerprint = ResolveFingerprint(request.FingerprintHash, userAgent);
 
         var userId = await _credentials.VerifyMfaAsync(
-            request.ChallengeToken, request.Code, ip, userAgent, ct);
+            request.ChallengeToken, request.Code, ip, userAgent, fingerprint, ct);
 
         var credential = await _credentialRepo.GetByUserIdAsync(userId, ct);
         var email = credential?.Email ?? string.Empty;
@@ -193,7 +193,7 @@ public sealed class BedrockAuthController : ControllerBase
         [FromBody] RefreshRequest request,
         CancellationToken ct)
     {
-        var refreshToken = Request.Cookies[ResolveRefreshCookieSettings().Name];
+        var refreshToken = Request.Cookies[ResolveRefreshCookieSettings().Name] ?? request.RefreshToken;
         if (string.IsNullOrEmpty(refreshToken))
             return Unauthorized(BedrockResponse<TokenResponse>.Fail("No refresh token."));
 
@@ -330,7 +330,7 @@ public sealed class BedrockAuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(userAgent)) userAgent = "unknown";
         var fingerprint = ResolveFingerprint(request.FingerprintHash, userAgent);
 
-        var result = await _credentials.VerifyMagicLinkAsync(request.TokenHash, ip, userAgent, ct);
+        var result = await _credentials.VerifyMagicLinkAsync(request.TokenHash, ip, userAgent, fingerprint, ct);
 
         if (result.IsLockedOut)
         {

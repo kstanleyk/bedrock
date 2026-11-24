@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\Crestacle.Bedrock.Core\Crestacle.Bedrock.Core.csproj" />
     <ProjectReference Include="..\Crestacle.Bedrock.AspNetCore\Crestacle.Bedrock.AspNetCore.csproj" />
     <ProjectReference Include="..\Crestacle.Bedrock.EntityFramework\Crestacle.Bedrock.EntityFramework.csproj" />

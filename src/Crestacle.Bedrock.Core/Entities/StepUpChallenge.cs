@@ -32,6 +32,9 @@ public sealed class StepUpChallenge
     public string? TenantId { get; private set; }
     public DateTime CreatedAt { get; private set; }
 
+    /// <summary>Optimistic concurrency token.</summary>
+    public byte[]? RowVersion { get; private set; }
+
     // -------------------------------------------------------------------------
     // Factory
     // -------------------------------------------------------------------------

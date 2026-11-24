@@ -4,6 +4,7 @@ using Crestacle.Bedrock.Core.Exceptions;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Core.Options;
 using Crestacle.Bedrock.EntityFramework;
+using Crestacle.Bedrock.EntityFramework.Caching;
 using Crestacle.Bedrock.EntityFramework.Extensions;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
@@ -18,6 +19,8 @@ public sealed class RefreshTokenServiceTests : IDisposable
     private readonly Microsoft.Data.Sqlite.SqliteConnection _connection;
     private readonly IRefreshTokenService _service;
     private readonly ICredentialService _credentials;
+    private readonly ITokenService _tokenService;
+    private readonly IBedrockCache _cache;
 
     private const string TestSigningKey = "Bedrock-Integration-Test-Signing-Key-32B!";
     private const string ValidPassword = "ValidP@ssword1!";
@@ -28,6 +31,8 @@ public sealed class RefreshTokenServiceTests : IDisposable
 
         var services = new ServiceCollection()
             .AddLogging()
+            .AddMemoryCache()
+            .AddSingleton<IBedrockCache, MemoryBedrockCache>()
             .AddSingleton<BedrockContext>(_context)
             .AddBedrockEntityFramework<BedrockContext>()
             .AddBedrockAspNetCore(opts =>
@@ -42,6 +47,8 @@ public sealed class RefreshTokenServiceTests : IDisposable
 
         _service = services.GetRequiredService<IRefreshTokenService>();
         _credentials = services.GetRequiredService<ICredentialService>();
+        _tokenService = services.GetRequiredService<ITokenService>();
+        _cache = services.GetRequiredService<IBedrockCache>();
     }
 
     // -------------------------------------------------------------------------
@@ -251,22 +258,39 @@ public sealed class RefreshTokenServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RevokeAsync_WithJti_BlacklistsAccessToken()
+    public async Task RevokeAsync_WithExplicitJti_BlacklistsAccessToken()
     {
-        // Arrange: build a minimal service provider that has a real IBedrockCache
         var userId = await RegisterAndGetUserIdAsync("revoke-jti@example.com");
         var pair = await _service.IssueAsync(userId, "revoke-jti@example.com", [],
             "127.0.0.1", "Agent", "fp1");
 
         var fakeJti = Guid.NewGuid().ToString();
 
-        // Act
         await _service.RevokeAsync(pair.RefreshToken, "127.0.0.1",
             accessTokenJti: fakeJti,
             accessTokenRemainingLifetime: TimeSpan.FromMinutes(14));
 
-        // The blacklist is in the IBedrockCache; if MemoryBedrockCache is wired we can verify via context
-        // (We verify absence of exception and that revoke still completes successfully)
+        (await _cache.ExistsAsync($"Bedrock:revoked:{fakeJti}")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RevokeAsync_WithoutExplicitJti_FallsBackToSessionsOwnAccessTokenAndBlacklistsIt()
+    {
+        // BedrockAuthController.Revoke/Logout call RevokeAsync with only the refresh token --
+        // no accessTokenJti/accessTokenRemainingLifetime -- so the still-live access token
+        // issued alongside it must still get blacklisted, sourced from the session row's own
+        // persisted AccessTokenJti/AccessTokenExpiresAt rather than a caller-supplied value.
+        var userId = await RegisterAndGetUserIdAsync("revoke-no-jti@example.com");
+        var pair = await _service.IssueAsync(userId, "revoke-no-jti@example.com", [],
+            "127.0.0.1", "Agent", "fp1");
+        var realJti = _tokenService.ExtractJti(pair.AccessToken);
+
+        (await _cache.ExistsAsync($"Bedrock:revoked:{realJti}")).Should().BeFalse();
+
+        await _service.RevokeAsync(pair.RefreshToken, "127.0.0.1");
+
+        (await _cache.ExistsAsync($"Bedrock:revoked:{realJti}")).Should().BeTrue(
+            "revoking by refresh token alone must still blacklist the session's own access token");
     }
 
     // -------------------------------------------------------------------------

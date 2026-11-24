@@ -44,8 +44,13 @@ internal sealed class SentinelClaimsEnricher(
     {
         // Sequential awaits: all three repositories share the same scoped DbContext instance,
         // so concurrent Task.WhenAll would trigger EF Core's "second operation" concurrency error.
+        //
+        // userId here is Bedrock's OWN internal user id -- the exact string
+        // GetPermissionsForUserAsync is keyed on is Sentinel's User.IdentityId, which is
+        // provisioned to equal that same string. Sentinel's User.Id is a SEPARATE, independently
+        // generated Guid; looking this user up by GetByIdAsync(userId) would never match it.
         var perms = await permissions.GetPermissionsForUserAsync(userId.ToString(), ct);
-        var user  = await users.GetByIdAsync(userId, ct);
+        var user  = await users.GetByIdentityIdAsync(userId.ToString(), ct);
         var cred  = await credentials.GetByUserIdAsync(userId, ct);
 
         var claims = perms.ToDictionary(p => p, _ => "true");
@@ -58,7 +63,8 @@ internal sealed class SentinelClaimsEnricher(
         Guid userId,
         CancellationToken ct = default)
     {
-        var user = await users.GetByIdAsync(userId, ct);
+        // Same identity-vs-internal-id distinction as EnrichAsync above.
+        var user = await users.GetByIdentityIdAsync(userId.ToString(), ct);
         return user?.Roles.Select(r => r.Name) ?? [];
     }
 }

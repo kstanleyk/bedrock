@@ -20,7 +20,8 @@ Sentinel stores roles and permissions in its own schema. You can share a single 
 
 ### Shared context (recommended for most applications)
 
-Have your `DbContext` inherit `BedrockContext` and also implement `IAuthDbContext`:
+Have your `DbContext` inherit `BedrockContext` and also implement `IAuthDbContext`. `IAuthDbContext`
+requires these exact members:
 
 ```csharp
 public class AppDbContext : BedrockContext, IAuthDbContext
@@ -28,14 +29,19 @@ public class AppDbContext : BedrockContext, IAuthDbContext
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
     // Sentinel tables
-    public DbSet<Role> Roles { get; set; } = null!;
-    public DbSet<UserPermission> UserPermissions { get; set; } = null!;
-    public DbSet<PermissionConflict> PermissionConflicts { get; set; } = null!;
-    public DbSet<PendingAssignment> PendingAssignments { get; set; } = null!;
-    public DbSet<SentinelAuditEntry> SentinelAuditEntries { get; set; } = null!;
-    public DbSet<SentinelUser> SentinelUsers { get; set; } = null!;
+    public DbSet<User>               Users               => Set<User>();
+    public DbSet<Role>                Roles               => Set<Role>();
+    public DbSet<Permission>         Permissions         => Set<Permission>();
+    public DbSet<UserRole>           UserRoles           => Set<UserRole>();
+    public DbSet<RolePermission>     RolePermissions     => Set<RolePermission>();
+    public DbSet<AuditEntry>         AuditLog            => Set<AuditEntry>();
+    public DbSet<PermissionConflict> PermissionConflicts => Set<PermissionConflict>();
+    public DbSet<PendingAssignment>  PendingAssignments  => Set<PendingAssignment>();
 }
 ```
+
+Note that Sentinel's `Core.Entities.User` is its own entity -- the Sentinel RBAC identity (keyed on
+`IdentityId`, a bridge key to Bedrock's own user record) -- not a reuse of a Bedrock type.
 
 ### Separate context
 
@@ -47,8 +53,8 @@ public class SentinelDbContext : DbContext, IAuthDbContext
     public SentinelDbContext(DbContextOptions<SentinelDbContext> options)
         : base(options) { }
 
-    public DbSet<Role> Roles { get; set; } = null!;
-    // ... remaining IAuthDbContext DbSets
+    public DbSet<User> Users { get; set; } = null!;
+    // ... remaining IAuthDbContext DbSets, same as above
 }
 ```
 
@@ -97,19 +103,26 @@ builder.Services
 
 ## Using permissions in your API
 
-Apply the `[MustHavePermission]` attribute to controllers or actions:
+Apply the `[MustHavePermission]` attribute to controllers or actions, passing a feature and an
+action rather than a single permission string:
 
 ```csharp
-[MustHavePermission("orders:read")]
+[MustHavePermission("Order", AppAction.Read)]
 [HttpGet("orders")]
 public IActionResult GetOrders() { ... }
 
-[MustHavePermission("orders:write")]
+[MustHavePermission("Order", AppAction.Create)]
 [HttpPost("orders")]
 public IActionResult CreateOrder() { ... }
 ```
 
-The attribute generates a dynamic ASP.NET Core policy for each permission string. You do not need to register policies manually.
+`AppAction` (`Crestacle.Sentinel.Core.Authorization`) provides the standard CRUD actions
+(`Create`, `Read`, `Update`, `Delete`); the feature is any string your app chooses to register in
+its permission registry. `SentinelFeature` provides the three feature names Sentinel's own
+built-in management endpoints use (`User`, `Role`, `Audit`) if you need to gate your own
+endpoints alongside them. The attribute resolves these to a permission ID of the form
+`Permission.{Feature}.{Action}` and generates a dynamic ASP.NET Core policy for it -- you do not
+need to register policies manually.
 
 ---
 
@@ -124,12 +137,16 @@ Enable claims caching to avoid re-resolving permissions on every request:
 .WithClaimsEnricherCache(TimeSpan.FromMinutes(5))
 ```
 
-Permission claims are added under the `permissions` claim key as an array:
+Each granted permission is added as its own flat claim (not nested under a single array key),
+along with a `name` and an `mfa_enabled` claim:
 
 ```json
 {
   "sub": "...",
-  "permissions": ["orders:read", "orders:write", "products:read"]
+  "Permission.Order.Read": "true",
+  "Permission.Order.Create": "true",
+  "name": "Jane Doe",
+  "mfa_enabled": "true"
 }
 ```
 

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Crestacle.Sentinel.Core.DTOs;
 using Crestacle.Sentinel.Core.Entities;
 using Crestacle.Sentinel.Core.Enums;
 
@@ -243,6 +244,53 @@ public sealed class SecurityBoundaryTests
 
         var body     = JsonContent.Create(new { permissionId = "Permission.Invoice.Read" });
         var response = await client.PostAsync($"/api/auth/roles/{Guid.NewGuid()}/permissions", body);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── 403 — Privilege-escalation guard (AssignRole) ────────────────────────
+
+    [Fact]
+    public async Task AssignRole_ActorLacksRolePermission_Returns403()
+    {
+        using var host = SentinelTestHost.Create();
+        var userId     = Guid.NewGuid();
+        var roleId     = Guid.NewGuid();
+
+        // The role being assigned grants a permission the actor does not hold.
+        host.RoleRepo.GetByIdAsync(roleId, Arg.Any<CancellationToken>())
+                     .Returns(new RoleDto(
+                         roleId, "invoice-approver", "Invoice Approver", "Default",
+                         RequiresDualApproval: false,
+                         Permissions: [new PermissionDto("Permission.Invoice.Approve", "Invoice", "Approve", "Finance", "")]));
+
+        // Actor only has User.Update -- not the role's own Invoice.Approve permission.
+        using var client = host.CreateClient("admin", UserUpdate);
+        var body         = JsonContent.Create(new { roleId });
+        var response     = await client.PostAsync($"/api/auth/users/{userId}/roles", body);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "an actor cannot assign a role bundling permissions they do not themselves hold");
+    }
+
+    [Fact]
+    public async Task AssignRole_ActorHoldsRolePermission_IsAllowed()
+    {
+        using var host = SentinelTestHost.Create();
+        var userId     = Guid.NewGuid();
+        var roleId     = Guid.NewGuid();
+        const string perm = "Permission.Invoice.Approve";
+
+        host.RoleRepo.GetByIdAsync(roleId, Arg.Any<CancellationToken>())
+                     .Returns(new RoleDto(
+                         roleId, "invoice-approver", "Invoice Approver", "Default",
+                         RequiresDualApproval: false,
+                         Permissions: [new PermissionDto(perm, "Invoice", "Approve", "Finance", "")]));
+
+        // Actor holds both User.Update AND the role's own Invoice.Approve permission.
+        using var client = host.CreateClient("admin", UserUpdate, perm);
+        var body         = JsonContent.Create(new { roleId });
+        var response     = await client.PostAsync($"/api/auth/users/{userId}/roles", body);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }

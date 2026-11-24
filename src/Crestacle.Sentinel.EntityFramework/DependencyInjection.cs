@@ -60,6 +60,7 @@ public static class DependencyInjection
                 sp.GetRequiredService<ICurrentActor>(),
                 sp.GetRequiredService<IPermissionCache>(),
                 sp.GetRequiredService<ITenantContext>(),
+                sp.GetRequiredService<IPermissionConflictRepository>(),
                 sp.GetRequiredService<ILogger<RoleRepository>>()));
 
         services.AddScoped<IUserRepository>(sp =>

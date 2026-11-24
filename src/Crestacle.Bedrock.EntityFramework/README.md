@@ -4,7 +4,7 @@ EF Core persistence layer for the Crestacle Bedrock authentication library.
 
 ## What's in this package
 
-- **`BedrockContext`** — abstract `DbContext` base class with pre-configured entity sets and table mappings
+- **`BedrockContext`** — `DbContext` base class with pre-configured entity sets and table mappings
 - **Repository implementations** — EF Core implementations of all `IXxxRepository` contracts from `Crestacle.Bedrock.Core`
 - **`MemoryBedrockCache`** — `IMemoryCache`-backed implementation of `IBedrockCache` for JTI blacklisting and distributed-lock semantics
 - **Health checks** — `BedrockHealthCheck` for database connectivity

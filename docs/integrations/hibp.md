@@ -20,11 +20,11 @@ dotnet add package Crestacle.Bedrock.HaveIBeenPwned
 builder.Services
     .AddBedrockEntityFramework<AppDbContext>()
     .AddBedrockAspNetCore(opts => { ... })
-    .AddHaveIBeenPwnedPasswordValidator()
+    .WithHaveIBeenPwnedPasswordValidator()
     .AddBedrockControllers();
 ```
 
-`AddHaveIBeenPwnedPasswordValidator()` registers the HIBP validator alongside the built-in complexity validator. Both run on every password submission.
+`WithHaveIBeenPwnedPasswordValidator()` wraps whatever `IPasswordValidator` is already registered — the built-in complexity validator by default, or your own custom validator if you registered one earlier in the chain — so both run on every password submission.
 
 ---
 
@@ -47,6 +47,6 @@ The built-in list blocks the top 1,000 most common passwords without a network c
 
 ## Network dependency
 
-HIBP validation requires an outbound HTTPS call to `api.pwnedpasswords.com` during password submission. If the API is unreachable, the validator fails closed — the password is rejected rather than accepted. This is the secure default.
+HIBP validation requires an outbound HTTPS call to `api.pwnedpasswords.com` during password submission. If the API is unreachable (network failure, timeout, or a non-2xx/parse error), the validator fails **open** — the password is accepted rather than rejected, so an HIBP outage never blocks registration or password changes. The inner validator's own complexity/history rules still run regardless.
 
-If you need to allow passwords through when the API is unavailable, you can implement a custom `IPasswordValidator` that wraps the HIBP validator with a fallback.
+If you need the stricter fail-closed behaviour instead, implement a custom `IPasswordValidator` that wraps `HaveIBeenPwnedPasswordValidator` and rejects the password when the breach check could not be completed.

@@ -31,6 +31,9 @@ public sealed class RefreshToken
 
     public string? TenantId { get; private set; }
 
+    /// <summary>Optimistic concurrency token.</summary>
+    public byte[]? RowVersion { get; private set; }
+
     // -------------------------------------------------------------------------
     // Factory
     // -------------------------------------------------------------------------

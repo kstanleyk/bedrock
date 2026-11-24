@@ -4,9 +4,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
+using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure.Postgres;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Crestacle.Bedrock.Tests.Integration.Controllers.Postgres;
@@ -40,7 +42,12 @@ public sealed class PostgresIntegrationTests : IDisposable
 
     public PostgresIntegrationTests()
     {
-        _server = new PostgresBedrockTestServer();
+        // The audit endpoint is admin-gated (see AuditControllerTests' own SQLite coverage);
+        // every test in this class gets a bedrock_admin claim so Login_AuditEventRecorded can
+        // exercise it without a second server instance re-wiping the shared Postgres schema.
+        _server = new PostgresBedrockTestServer(
+            configureServices: services =>
+                services.AddSingleton<IBedrockClaimsEnricher, AdminClaimsEnricher>());
         _client = _server.Client;
     }
 
@@ -86,10 +93,15 @@ public sealed class PostgresIntegrationTests : IDisposable
         const string email = "pg-login@example.com";
         await RegisterAndActivateAsync(email);
 
-        var tokens = await LoginAsync(email);
+        var response = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login", new LoginRequest(email, ValidPassword));
+        var body = await ReadAsync<BedrockResponse<LoginResponse>>(response);
 
-        tokens.AccessToken.Should().NotBeNullOrEmpty();
-        tokens.RefreshToken.Should().NotBeNullOrEmpty();
+        body.Data!.AccessToken.Should().NotBeNullOrEmpty();
+
+        // HttpOnly-cookie hardening: the refresh token is never in the JSON body.
+        body.Data.RefreshToken.Should().BeNull();
+        response.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
     }
 
     [PostgresFact]
@@ -114,11 +126,13 @@ public sealed class PostgresIntegrationTests : IDisposable
     {
         const string email = "pg-refresh@example.com";
         await RegisterAndActivateAsync(email);
-        var loginTokens = await LoginAsync(email);
+        var loginResponse = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login", new LoginRequest(email, ValidPassword));
+        var loginCookie = loginResponse.GetRefreshCookieValue();
 
-        var response = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/refresh",
-            new RefreshRequest(loginTokens.RefreshToken!));
+        _client.SetRefreshCookie(loginCookie);
+        var response = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        _client.SetRefreshCookie(null);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadAsync<BedrockResponse<TokenResponse>>(response);
@@ -130,14 +144,17 @@ public sealed class PostgresIntegrationTests : IDisposable
     {
         const string email = "pg-rotate@example.com";
         await RegisterAndActivateAsync(email);
-        var loginTokens = await LoginAsync(email);
+        var loginResponse = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login", new LoginRequest(email, ValidPassword));
+        var loginCookie = loginResponse.GetRefreshCookieValue();
 
-        await _client.PostAsJsonAsync("/api/bedrock/auth/refresh",
-            new RefreshRequest(loginTokens.RefreshToken!));
+        // First use rotates the token -- replay the ORIGINAL (now-superseded) cookie value.
+        _client.SetRefreshCookie(loginCookie);
+        await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
 
-        var response = await _client.PostAsJsonAsync(
-            "/api/bedrock/auth/refresh",
-            new RefreshRequest(loginTokens.RefreshToken!));
+        _client.SetRefreshCookie(loginCookie);
+        var response = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        _client.SetRefreshCookie(null);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             because: "the original refresh token must be invalidated after first use");
@@ -153,29 +170,32 @@ public sealed class PostgresIntegrationTests : IDisposable
         const string email = "pg-sessions@example.com";
         await RegisterAndActivateAsync(email);
 
+        // Each login's real refresh-token value lives only in that response's Set-Cookie header
+        // (HttpOnly-cookie hardening) -- capture all four independently rather than relying on
+        // the client's single ambient cookie, since this test needs to juggle four distinct
+        // session tokens at once.
         var refreshTokens = new List<string>();
         for (var i = 0; i < 4; i++)
         {
             var resp = await _client.PostAsJsonAsync("/api/bedrock/auth/login",
                 new LoginRequest(email, ValidPassword));
-            var body = await ReadAsync<BedrockResponse<LoginResponse>>(resp);
-            refreshTokens.Add(body.Data!.RefreshToken!);
+            refreshTokens.Add(resp.GetRefreshCookieValue()!);
         }
 
-        var firstResp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh",
-            new RefreshRequest(refreshTokens[0]));
+        _client.SetRefreshCookie(refreshTokens[0]);
+        var firstResp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
         firstResp.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             because: "the oldest session must be evicted when the 4th session is created");
 
         for (var i = 1; i <= 3; i++)
         {
-            var resp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh",
-                new RefreshRequest(refreshTokens[i]));
+            _client.SetRefreshCookie(refreshTokens[i]);
+            var resp = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
             resp.StatusCode.Should().Be(HttpStatusCode.OK,
                 because: $"token {i} should still be valid");
-            var body = await ReadAsync<BedrockResponse<TokenResponse>>(resp);
-            refreshTokens[i] = body.Data!.RefreshToken!;
+            refreshTokens[i] = resp.GetRefreshCookieValue()!;
         }
+        _client.SetRefreshCookie(null);
     }
 
     // -------------------------------------------------------------------------
@@ -232,4 +252,11 @@ public sealed class PostgresIntegrationTests : IDisposable
     }
 
     public void Dispose() => _server.Dispose();
+
+    private sealed class AdminClaimsEnricher : IBedrockClaimsEnricher
+    {
+        public Task<IDictionary<string, string>> EnrichAsync(Guid userId, CancellationToken ct = default)
+            => Task.FromResult<IDictionary<string, string>>(
+                new Dictionary<string, string> { ["bedrock_admin"] = "true" });
+    }
 }

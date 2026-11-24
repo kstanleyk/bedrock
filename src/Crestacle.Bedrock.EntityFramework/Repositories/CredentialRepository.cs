@@ -36,15 +36,25 @@ internal sealed class CredentialRepository : ICredentialRepository
         // is called against a genuinely fresh request/scope (this repository's own
         // GetByUserIdAsync/GetByEmailAsync both read AsNoTracking by design). A blanket
         // `_context.UserCredentials.Update(credential)` attach here loses the row's real
-        // xmin concurrency token -- an AsNoTracking-materialized object never carries
-        // one as a shadow property -- so the generated `WHERE ... AND xmin = @p` always
-        // compares against the CLR default (0), and since Postgres transaction ids are
-        // never 0, the UPDATE always reports "0 rows affected"
-        // (DbUpdateConcurrencyException) on every real, separate-request call. Loading a
-        // genuinely tracked stub by primary key first captures the row's real, current
-        // xmin before CurrentValues.SetValues overlays the caller's own field values
-        // onto it, so the concurrency check is correct regardless of how the caller
+        // concurrency-token value -- an AsNoTracking-materialized object's original value
+        // isn't retained once the caller mutates the entity in memory -- so the generated
+        // concurrency-check WHERE clause would compare against a stale or default value
+        // and always report "0 rows affected" (DbUpdateConcurrencyException) on every real,
+        // separate-request call. Loading a genuinely tracked stub by primary key first
+        // captures the row's real, current concurrency-token value before
+        // CurrentValues.SetValues overlays the caller's own field values onto it, so the
+        // comparison is against the real stored value regardless of how the caller
         // originally obtained `credential`.
+        //
+        // The actual token differs by provider (docs/quality-roadmap.md D5, fixed): SQL
+        // Server uses UserCredentialConfiguration's IsRowVersion() byte[] RowVersion column
+        // directly (its native rowversion/timestamp type auto-increments on every write).
+        // PostgreSQL has no equivalent for a plain byte[] column, so BedrockContext
+        // .OnModelCreating auto-detects the Npgsql provider and maps the real `xmin` system
+        // column (which DOES change on every UPDATE) as the concurrency token instead,
+        // ignoring RowVersion entirely in that case. Either way, this method's job is the
+        // same: make sure the save compares against the row's actual current token, not a
+        // stale or default one.
         var trackedStub = await _context.UserCredentials.FindAsync([credential.Id], ct)
             ?? throw new InvalidOperationException($"UserCredential {credential.Id} not found for update.");
         _context.Entry(trackedStub).CurrentValues.SetValues(credential);

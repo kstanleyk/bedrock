@@ -73,8 +73,11 @@ public sealed class InvitationTests : IDisposable
         var body = await ReadBedrockResponseAsync<LoginResponse>(acceptResponse);
         body.Data.Should().NotBeNull();
         body.Data!.AccessToken.Should().NotBeNullOrWhiteSpace();
-        body.Data!.RefreshToken.Should().NotBeNullOrWhiteSpace();
         body.Data!.AccessTokenExpiresAt.Should().BeAfter(DateTime.UtcNow);
+
+        // HttpOnly-cookie hardening: the refresh token is never in the JSON body.
+        body.Data!.RefreshToken.Should().BeNull();
+        acceptResponse.GetRefreshCookieValue().Should().NotBeNullOrEmpty();
     }
 
     [Fact]
@@ -133,6 +136,41 @@ public sealed class InvitationTests : IDisposable
             .First(i => i.TargetEmail == inviteeEmail);
         invitation.AcceptedAt.Should().NotBeNull();
         invitation.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AcceptInvitation_DoesNotSendADanglingVerificationEmailOrCreateAnUnusableToken()
+    {
+        var adminEmail = "inv-admin5@example.com";
+        var inviteeEmail = "invitee5@example.com";
+
+        await RegisterAndActivateAsync(adminEmail);
+        var adminToken = await GetTokenAsync(adminEmail, AdminPassword);
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", adminToken);
+
+        await _client.PostAsJsonAsync(
+            "/api/bedrock/admin/invitations",
+            new CreateInvitationRequest(inviteeEmail));
+
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(inviteeEmail)!);
+
+        _client.DefaultRequestHeaders.Authorization = null;
+
+        await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/accept-invitation",
+            new AcceptInvitationRequest(rawToken, InviteePassword));
+
+        // Accepting an invitation force-confirms the email immediately — RegisterAsync must not
+        // also have sent a verification email or created a verification token for it, since
+        // invitation acceptance (not a verification link) is what actually confirmed this
+        // account. _emailSender.LastBodyFor only ever captured the INVITATION email itself
+        // (not overwritten by a verification email) and no EmailVerificationToken row exists.
+        var userId = _server.DbContext.UserCredentials.First(c => c.Email == inviteeEmail).UserId;
+
+        _server.DbContext.EmailVerificationTokens.Any(t => t.UserId == userId).Should().BeFalse(
+            "invitation acceptance force-confirms the email itself; a verification token here " +
+            "would be dangling and never consumed");
     }
 
     // -------------------------------------------------------------------------

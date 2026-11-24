@@ -32,4 +32,23 @@ internal static class PostgresDbContextFactory
         context.Database.EnsureCreated();
         return context;
     }
+
+    /// <summary>
+    /// Creates a second <see cref="TestBedrockContext"/> against the SAME already-created
+    /// schema, without dropping/recreating it -- for tests that need two independent contexts
+    /// open against the same live data (e.g. simulating two concurrent requests), where calling
+    /// <see cref="Create"/> again would wipe out whatever the first context just wrote.
+    /// </summary>
+    internal static TestBedrockContext CreateWithoutResettingSchema()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(EnvVar)
+            ?? throw new InvalidOperationException(
+                $"Environment variable '{EnvVar}' is not set.");
+
+        var options = new DbContextOptionsBuilder<TestBedrockContext>()
+            .UseNpgsql(connectionString)
+            .Options;
+
+        return new TestBedrockContext(options);
+    }
 }

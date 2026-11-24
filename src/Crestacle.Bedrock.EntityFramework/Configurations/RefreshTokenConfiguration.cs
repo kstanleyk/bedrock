@@ -23,6 +23,10 @@ internal sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<Refre
         builder.Property(e => e.ReplacedByTokenHash).HasColumnName("replaced_by_token_hash").HasMaxLength(128);
         builder.Property(e => e.TenantId).HasColumnName("tenant_id").HasMaxLength(64);
 
+        builder.Property(e => e.RowVersion)
+            .HasColumnName("row_version")
+            .IsRowVersion();
+
         builder.HasIndex(e => e.TokenHash)
             .IsUnique()
             .HasDatabaseName("uq_refresh_tokens_hash");

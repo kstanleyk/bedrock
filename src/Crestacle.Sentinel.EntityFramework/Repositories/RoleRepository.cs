@@ -1,3 +1,4 @@
+using System.Data;
 using Crestacle.Sentinel.Core.DTOs;
 using Crestacle.Sentinel.Core.Entities;
 using Crestacle.Sentinel.Core.Enums;
@@ -9,11 +10,12 @@ using Microsoft.Extensions.Logging;
 namespace Crestacle.Sentinel.EntityFramework.Repositories;
 
 internal sealed class RoleRepository(
-    IAuthDbContext          context,
-    ICurrentActor           actor,
-    IPermissionCache        cache,
-    ITenantContext          tenantContext,
-    ILogger<RoleRepository> logger)
+    IAuthDbContext                context,
+    ICurrentActor                 actor,
+    IPermissionCache              cache,
+    ITenantContext                tenantContext,
+    IPermissionConflictRepository conflictRepository,
+    ILogger<RoleRepository>       logger)
     : IRoleRepository
 {
     public async Task<PagedResult<RoleDto>> GetAllWithPermissionsAsync(
@@ -22,9 +24,11 @@ internal sealed class RoleRepository(
         var tenantId    = tenantContext.TenantId;
         var searchLower = search?.ToLowerInvariant();
 
+        // Global/shared roles (TenantId == null, see Role.TenantId's own doc comment) must be
+        // visible to a tenant-scoped caller too, not just when the caller itself has no tenant.
         var query = context.Roles
             .AsNoTracking()
-            .Where(r => tenantId == null || r.TenantId == tenantId)
+            .Where(r => tenantId == null || r.TenantId == tenantId || r.TenantId == null)
             .Where(r => searchLower == null
                      || r.Name.ToLower().Contains(searchLower)
                      || (r.DisplayName != null && r.DisplayName.ToLower().Contains(searchLower)))
@@ -44,7 +48,7 @@ internal sealed class RoleRepository(
                 r.RequiresDualApproval,
                 r.RolePermissions
                     .Where(rp => rp.RemovedOn == null
-                              && (tenantId    == null || rp.TenantId == tenantId))
+                              && (tenantId == null || rp.TenantId == tenantId || rp.TenantId == null))
                     .Select(rp => new PermissionDto(
                         rp.Permission.Id,
                         rp.Permission.Feature,
@@ -62,7 +66,7 @@ internal sealed class RoleRepository(
 
         return await context.Roles
             .AsNoTracking()
-            .Where(r => r.Id == roleId && (tenantId == null || r.TenantId == tenantId))
+            .Where(r => r.Id == roleId && (tenantId == null || r.TenantId == tenantId || r.TenantId == null))
             .Select(r => new RoleDto(
                 r.Id,
                 r.Name,
@@ -71,7 +75,7 @@ internal sealed class RoleRepository(
                 r.RequiresDualApproval,
                 r.RolePermissions
                     .Where(rp => rp.RemovedOn == null
-                              && (tenantId    == null || rp.TenantId == tenantId))
+                              && (tenantId == null || rp.TenantId == tenantId || rp.TenantId == null))
                     .Select(rp => new PermissionDto(
                         rp.Permission.Id,
                         rp.Permission.Feature,
@@ -101,46 +105,73 @@ internal sealed class RoleRepository(
         if (!await context.Permissions.AnyAsync(p => p.Id == permissionId, ct))
             throw new SentinelNotFoundException($"Permission '{permissionId}' does not exist.");
 
-        var activeExists = await context.RolePermissions
-            .AnyAsync(rp => rp.RoleId       == roleId
-                         && rp.PermissionId == permissionId
-                         && rp.RemovedOn    == null, ct);
-
-        if (activeExists)
-            return;
-
-        var affectedIdentityIds = await AffectedIdentityIdsAsync(roleId, tenantId, ct);
-
-        context.RolePermissions.Add(new RolePermission
-        {
-            RoleId       = roleId,
-            PermissionId = permissionId,
-            CreatedOn    = DateTime.UtcNow,
-            TenantId     = tenantId,
-        });
-
-        context.AuditLog.Add(AuditEntry.Create(
-            AuditAction.PermissionAssigned,
-            $"{roleId}/{permissionId}",
-            actor.IdentityId,
-            actor.IpAddress,
-            actor.UserAgent));
+        // The Separation-of-Duties check (below) and the insert must be atomic: without a
+        // serializable transaction, two concurrent AddPermissionAsync calls granting two
+        // mutually-conflicting permissions to the same role can each see "no conflict yet" and
+        // both succeed, silently violating SoD. Relational providers support Serializable;
+        // the in-memory provider (unit tests) does not support transactions at all, so it keeps
+        // the prior check-then-insert behaviour -- correctness there is covered by the dedicated
+        // SQLite-backed concurrency test instead.
+        var useTransaction = context.Database.IsRelational();
+        var transaction = useTransaction
+            ? await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
 
         try
         {
-            await context.SaveChangesAsync(ct);
+            var activeExists = await context.RolePermissions
+                .AnyAsync(rp => rp.RoleId       == roleId
+                             && rp.PermissionId == permissionId
+                             && rp.RemovedOn    == null, ct);
+
+            if (activeExists)
+                return;
+
+            if (await conflictRepository.HasConflictAsync(roleId, permissionId, ct))
+                throw new SentinelPermissionConflictException(
+                    "This permission conflicts with an existing permission on the role (Separation of Duties).");
+
+            var affectedIdentityIds = await AffectedIdentityIdsAsync(roleId, tenantId, ct);
+
+            context.RolePermissions.Add(new RolePermission
+            {
+                RoleId       = roleId,
+                PermissionId = permissionId,
+                CreatedOn    = DateTime.UtcNow,
+                TenantId     = tenantId,
+            });
+
+            context.AuditLog.Add(AuditEntry.Create(
+                AuditAction.PermissionAssigned,
+                $"{roleId}/{permissionId}",
+                actor.IdentityId,
+                actor.IpAddress,
+                actor.UserAgent));
+
+            try
+            {
+                await context.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                logger.LogWarning("Concurrency conflict adding permission {PermissionId} to role {RoleId}.", permissionId, roleId);
+                throw new SentinelConcurrencyException(
+                    $"Concurrent write conflict on role {roleId}.", ex);
+            }
+
+            if (transaction is not null)
+                await transaction.CommitAsync(ct);
+
+            logger.LogInformation("Permission {PermissionId} added to role {RoleId}.", permissionId, roleId);
+
+            foreach (var id in affectedIdentityIds)
+                await cache.InvalidateUserAsync(id, ct);
         }
-        catch (DbUpdateConcurrencyException ex)
+        finally
         {
-            logger.LogWarning("Concurrency conflict adding permission {PermissionId} to role {RoleId}.", permissionId, roleId);
-            throw new SentinelConcurrencyException(
-                $"Concurrent write conflict on role {roleId}.", ex);
+            if (transaction is not null)
+                await transaction.DisposeAsync();
         }
-
-        logger.LogInformation("Permission {PermissionId} added to role {RoleId}.", permissionId, roleId);
-
-        foreach (var id in affectedIdentityIds)
-            await cache.InvalidateUserAsync(id, ct);
     }
 
     public async Task RemovePermissionAsync(Guid roleId, string permissionId, CancellationToken ct = default)

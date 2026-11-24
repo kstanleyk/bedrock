@@ -6,6 +6,7 @@ using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Enumerations;
 using Crestacle.Bedrock.Core.Interfaces;
+using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,7 +27,11 @@ public sealed class AuditControllerTests : IDisposable
     public AuditControllerTests()
     {
         _server = new BedrockTestServer(
-            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
+            configureServices: services =>
+            {
+                services.AddSingleton<IEmailSender>(_emailSender);
+                services.AddSingleton<IBedrockClaimsEnricher, AdminClaimsEnricher>();
+            });
         _client = _server.Client;
     }
 
@@ -40,6 +45,32 @@ public sealed class AuditControllerTests : IDisposable
         var response = await _client.GetAsync("/api/bedrock/audit");
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Query_AsNonAdmin_Returns403()
+    {
+        // A separate server without the admin-claims enricher: a regular authenticated user
+        // must not be able to read any user's authentication audit trail.
+        using var server = new BedrockTestServer(
+            configureServices: services => services.AddSingleton<IEmailSender>(_emailSender));
+        var client = server.Client;
+
+        const string email = "audit-nonadmin@example.com";
+        await client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, ValidPassword));
+        var rawToken = CapturingEmailSender.ExtractToken(_emailSender.LastBodyFor(email)!);
+        await client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
+        var loginResp = await client.PostAsJsonAsync(
+            "/api/bedrock/auth/login", new LoginRequest(email, ValidPassword));
+        var loginBody = await ReadAsync<BedrockResponse<LoginResponse>>(loginResp);
+
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", loginBody.Data!.AccessToken);
+
+        var response = await client.GetAsync("/api/bedrock/audit");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "a regular user must not be able to read other users' authentication audit entries");
     }
 
     [Fact]
@@ -168,4 +199,11 @@ public sealed class AuditControllerTests : IDisposable
     }
 
     public void Dispose() => _server.Dispose();
+
+    private sealed class AdminClaimsEnricher : IBedrockClaimsEnricher
+    {
+        public Task<IDictionary<string, string>> EnrichAsync(Guid userId, CancellationToken ct = default)
+            => Task.FromResult<IDictionary<string, string>>(
+                new Dictionary<string, string> { ["bedrock_admin"] = "true" });
+    }
 }

@@ -83,6 +83,14 @@ public sealed class RolesController(
         {
             return NotFound(new { error = ex.Message });
         }
+        catch (SentinelPermissionConflictException ex)
+        {
+            // Backstop for the pre-check above: under true concurrency, two requests can both
+            // pass the pre-check before either commits. AddPermissionAsync re-checks for SoD
+            // conflicts inside its own transaction, so this is reachable even though the
+            // pre-check already returned Conflict for the common (non-racing) case.
+            return Conflict(new { error = ex.Message });
+        }
         catch (SentinelConcurrencyException)
         {
             return Conflict(new { error = "The role was modified by another request. Please retry." });

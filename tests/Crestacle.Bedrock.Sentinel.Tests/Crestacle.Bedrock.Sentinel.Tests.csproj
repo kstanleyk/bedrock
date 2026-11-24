@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.Sentinel\Crestacle.Bedrock.Sentinel.csproj" />
   </ItemGroup>
 

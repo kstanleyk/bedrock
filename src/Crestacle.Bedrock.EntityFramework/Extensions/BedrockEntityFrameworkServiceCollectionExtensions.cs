@@ -108,7 +108,15 @@ public static class BedrockEntityFrameworkServiceCollectionExtensions
         services.AddScoped<IApiKeyRepository, ApiKeyRepository>();
 
         services.AddMemoryCache();
-        services.AddScoped<IBedrockCache, MemoryBedrockCache>();
+        // Singleton, not Scoped: TryAcquireLockAsync's correctness depends on _lockGate being
+        // the SAME object across concurrent callers (see its own class remarks). A Scoped
+        // registration gives every request its own MemoryBedrockCache instance -- and its own
+        // fresh _lockGate -- so the lock statement never actually serializes two concurrent
+        // requests against each other, silently defeating the documented single-node NX-gate
+        // guarantee (MaxConcurrentSessions enforcement, JTI-blacklist atomicity) even within
+        // one process. IMemoryCache itself is already Singleton; this has no scoped dependency
+        // of its own, so Singleton is safe.
+        services.AddSingleton<IBedrockCache, MemoryBedrockCache>();
 
         return services;
     }

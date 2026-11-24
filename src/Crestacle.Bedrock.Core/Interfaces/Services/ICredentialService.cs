@@ -19,9 +19,17 @@ public interface ICredentialService
     /// <param name="email">The user's email address; must be unique across the tenant.</param>
     /// <param name="password">The plaintext password; validated against configured complexity rules before hashing.</param>
     /// <param name="tenantId">Optional tenant identifier for multi-tenant deployments.</param>
+    /// <param name="sendVerificationEmail">
+    /// When <see langword="false"/>, skips creating an <c>EmailVerificationToken</c> and sending
+    /// the verification email entirely — for callers (e.g. invitation acceptance) that will
+    /// force-confirm the email themselves moments later in the same operation, where a
+    /// verification token/email would be genuinely dangling, not merely redundant.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <exception cref="BedrockValidationException">Thrown when the email is already registered or the password fails complexity validation.</exception>
-    Task RegisterAsync(Guid userId, string email, string password, string? tenantId = null, CancellationToken ct = default);
+    Task RegisterAsync(
+        Guid userId, string email, string password, string? tenantId = null,
+        bool sendVerificationEmail = true, CancellationToken ct = default);
 
     /// <summary>Activates an email address using the verification token sent during registration.</summary>
     /// <param name="rawToken">The raw token value from the verification link (not pre-hashed).</param>
@@ -109,10 +117,18 @@ public interface ICredentialService
     /// <param name="code">The TOTP code, OTP code, or recovery code supplied by the user.</param>
     /// <param name="ip">The client IP address for audit logging.</param>
     /// <param name="userAgent">The client User-Agent for audit logging.</param>
+    /// <param name="fingerprintHash">
+    /// The SAME client-supplied device fingerprint <see cref="LoginFirstFactorAsync"/> was
+    /// called with (or its userAgent-derived fallback) — used to record the known-device row
+    /// for this completed login. Must match the value space <see cref="LoginFirstFactorAsync"/>
+    /// checks anomalies against; a different value space here (e.g. a hash derived only from
+    /// userAgent+ip) would record a known-device row the next plain-password login's anomaly
+    /// check can never match, permanently flagging an MFA-verified device as anomalous.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The authenticated user's ID.</returns>
     /// <exception cref="BedrockValidationException">Thrown when the challenge token is invalid, the code is incorrect, or the challenge has expired.</exception>
-    Task<Guid> VerifyMfaAsync(string challengeToken, string code, string ip, string userAgent, CancellationToken ct = default);
+    Task<Guid> VerifyMfaAsync(string challengeToken, string code, string ip, string userAgent, string fingerprintHash, CancellationToken ct = default);
 
     // -------------------------------------------------------------------------
     // MFA enrollment
@@ -177,9 +193,14 @@ public interface ICredentialService
     /// <param name="rawToken">The raw token value from the magic-link URL (not pre-hashed).</param>
     /// <param name="ipAddress">The client IP address for audit logging.</param>
     /// <param name="userAgent">The client User-Agent for audit logging.</param>
+    /// <param name="fingerprintHash">
+    /// The same client-supplied device fingerprint <see cref="LoginFirstFactorAsync"/> is
+    /// called with — see <see cref="VerifyMfaAsync"/>'s matching parameter for why the value
+    /// space must be consistent across every first-factor path.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A <see cref="FirstFactorResult"/> indicating the outcome and any required next step.</returns>
-    Task<FirstFactorResult> VerifyMagicLinkAsync(string rawToken, string ipAddress, string userAgent, CancellationToken ct = default);
+    Task<FirstFactorResult> VerifyMagicLinkAsync(string rawToken, string ipAddress, string userAgent, string fingerprintHash, CancellationToken ct = default);
 
     // -------------------------------------------------------------------------
     // Account erasure

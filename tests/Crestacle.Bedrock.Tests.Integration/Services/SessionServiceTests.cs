@@ -3,6 +3,7 @@ using Crestacle.Bedrock.Core.Exceptions;
 using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
 using Crestacle.Bedrock.EntityFramework;
+using Crestacle.Bedrock.EntityFramework.Caching;
 using Crestacle.Bedrock.EntityFramework.Extensions;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
@@ -19,6 +20,8 @@ public sealed class SessionServiceTests : IDisposable
     private readonly ICredentialService _credentialService;
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly ISessionService _sessionService;
+    private readonly ITokenService _tokenService;
+    private readonly IBedrockCache _cache;
     private readonly CapturingEmailSender _emailSender = new();
 
     private const string ValidPassword = "ValidP@ssword1!";
@@ -30,6 +33,8 @@ public sealed class SessionServiceTests : IDisposable
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddMemoryCache();
+        services.AddSingleton<IBedrockCache, MemoryBedrockCache>();
         services.AddSingleton<BedrockContext>(_context);
         services.AddSingleton<IEmailSender>(_emailSender);
         services.AddBedrockEntityFramework<BedrockContext>();
@@ -51,6 +56,8 @@ public sealed class SessionServiceTests : IDisposable
         _credentialService = sp.GetRequiredService<ICredentialService>();
         _refreshTokenService = sp.GetRequiredService<IRefreshTokenService>();
         _sessionService = sp.GetRequiredService<ISessionService>();
+        _tokenService = sp.GetRequiredService<ITokenService>();
+        _cache = sp.GetRequiredService<IBedrockCache>();
     }
 
     // -------------------------------------------------------------------------
@@ -67,10 +74,13 @@ public sealed class SessionServiceTests : IDisposable
     }
 
     private async Task<string> LoginAndIssueAsync(Guid userId, string email, string fingerprint = "fp-default", string ip = "1.2.3.4")
+        => (await LoginAndIssueTokensAsync(userId, email, fingerprint, ip)).RefreshToken;
+
+    private async Task<Crestacle.Bedrock.Core.DTOs.TokenPair> LoginAndIssueTokensAsync(
+        Guid userId, string email, string fingerprint = "fp-default", string ip = "1.2.3.4")
     {
         await _credentialService.LoginFirstFactorAsync(email, ValidPassword, ip, "TestAgent/1.0", fingerprint);
-        var tokens = await _refreshTokenService.IssueAsync(userId, email, Array.Empty<string>(), ip, "TestAgent/1.0", fingerprint);
-        return tokens.RefreshToken;
+        return await _refreshTokenService.IssueAsync(userId, email, Array.Empty<string>(), ip, "TestAgent/1.0", fingerprint);
     }
 
     // -------------------------------------------------------------------------
@@ -155,6 +165,25 @@ public sealed class SessionServiceTests : IDisposable
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task RevokeSessionAsync_ValidSession_BlacklistsTheStillLiveAccessToken()
+    {
+        var email = "sessions-revoke-blacklist@example.com";
+        var userId = await RegisterAndActivateAsync(email);
+        var tokens = await LoginAndIssueTokensAsync(userId, email);
+        var jti = _tokenService.ExtractJti(tokens.AccessToken);
+
+        (await _cache.ExistsAsync($"Bedrock:revoked:{jti}")).Should().BeFalse(
+            "the access token must not be blacklisted before its session is revoked");
+
+        var sessions = await _sessionService.GetActiveSessionsAsync(userId);
+        await _sessionService.RevokeSessionAsync(sessions[0].Id, userId, "1.2.3.4");
+
+        (await _cache.ExistsAsync($"Bedrock:revoked:{jti}")).Should().BeTrue(
+            "revoking a session must blacklist its still-live access token immediately, " +
+            "not leave it valid until its natural expiry");
+    }
+
     // -------------------------------------------------------------------------
     // RevokeAllSessionsAsync
     // -------------------------------------------------------------------------
@@ -173,6 +202,22 @@ public sealed class SessionServiceTests : IDisposable
 
         var after = await _sessionService.GetActiveSessionsAsync(userId);
         after.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RevokeAllSessionsAsync_MultipleSessions_BlacklistsEveryStillLiveAccessToken()
+    {
+        var email = "sessions-revoke-all-blacklist@example.com";
+        var userId = await RegisterAndActivateAsync(email);
+        var tokens1 = await LoginAndIssueTokensAsync(userId, email, "fp-1");
+        var tokens2 = await LoginAndIssueTokensAsync(userId, email, "fp-2");
+        var jti1 = _tokenService.ExtractJti(tokens1.AccessToken);
+        var jti2 = _tokenService.ExtractJti(tokens2.AccessToken);
+
+        await _sessionService.RevokeAllSessionsAsync(userId, "1.2.3.4");
+
+        (await _cache.ExistsAsync($"Bedrock:revoked:{jti1}")).Should().BeTrue();
+        (await _cache.ExistsAsync($"Bedrock:revoked:{jti2}")).Should().BeTrue();
     }
 
     // -------------------------------------------------------------------------

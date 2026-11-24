@@ -90,9 +90,11 @@ internal sealed partial class InvitationService : IInvitationService
         var newUserId = Guid.NewGuid();
 
         // RegisterAsync validates password, hashes it, creates the credential in
-        // PendingVerification state, and saves. The verification email is a no-op
-        // because invitation acceptance implies the email is already confirmed.
-        await _credentialService.RegisterAsync(newUserId, invitation.TargetEmail, password, ct: ct);
+        // PendingVerification state, and saves. sendVerificationEmail: false -- invitation
+        // acceptance force-confirms the email itself two lines below, so a verification
+        // token/email here would be genuinely dangling, never consumed.
+        await _credentialService.RegisterAsync(
+            newUserId, invitation.TargetEmail, password, sendVerificationEmail: false, ct: ct);
 
         // Auto-confirm: load the freshly persisted credential and mark it Active.
         var credential = await _credentialRepo.GetByEmailAsync(invitation.TargetEmail, ct);

@@ -69,6 +69,38 @@ public sealed class JwtServiceTests
     }
 
     [Fact]
+    public void GenerateAccessToken_ValidatedViaBedrockJwtHelper_IsInRoleRecognizesEachRole()
+    {
+        // BedrockJwtHelper.BuildValidationParameters is what the real JWT Bearer pipeline (and
+        // JwtService's own internal-token validation) actually configures RoleClaimType with.
+        // Must match the "roles" claim key GenerateAccessToken emits above, or
+        // ClaimsPrincipal.IsInRole()/[Authorize(Roles = ...)] silently never match any role on
+        // a real Bedrock-issued token regardless of what roles the user actually holds.
+        var opts = new BedrockOptions();
+        opts.Jwt.SigningKey = TestSigningKey;
+        opts.Jwt.Issuer = "test-issuer";
+        opts.Jwt.Audience = "test-audience";
+        var svc = new JwtService(Options.Create(opts));
+        var token = svc.GenerateAccessToken(Guid.NewGuid(), "u@test.com", ["admin", "finance"]);
+
+        // MapInboundClaims = false to match how the token is actually validated in production:
+        // the modern JwtBearerHandler validates via Microsoft.IdentityModel.JsonWebTokens
+        // .JsonWebTokenHandler, which defaults to MapInboundClaims = false -- unlike THIS
+        // legacy JwtSecurityTokenHandler type, whose default of true would silently rename the
+        // "roles" claim to the ClaimTypes.Role URI before RoleClaimType is even consulted,
+        // masking exactly the bug this test exists to catch.
+        var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+        var principal = handler.ValidateToken(
+            token,
+            Crestacle.Bedrock.AspNetCore.Helpers.BedrockJwtHelper.BuildValidationParameters(opts.Jwt),
+            out _);
+
+        principal.IsInRole("admin").Should().BeTrue();
+        principal.IsInRole("finance").Should().BeTrue();
+        principal.IsInRole("nonexistent-role").Should().BeFalse();
+    }
+
+    [Fact]
     public void GenerateAccessToken_WithExtraClaims_IncludesExtra()
     {
         var svc = CreateService();

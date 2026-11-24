@@ -29,6 +29,9 @@
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <!-- SQLitePCLRaw.lib.e_sqlite3 2.1.11 (pulled in transitively) has GHSA-2m69-gcr7-jv3q; override to the patched version. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" VersionOverride="2.1.13" />
   </ItemGroup>
 
 </Project>

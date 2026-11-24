@@ -258,15 +258,19 @@ internal sealed partial class RefreshTokenService : IRefreshTokenService
         await _unitOfWork.SaveChangesAsync(ct);
         LogTokenRevoked(_logger, existing.UserId, existing.TenantId);
 
-        // Blacklist the access token jti so in-flight requests are rejected immediately
-        if (!string.IsNullOrEmpty(accessTokenJti)
-            && accessTokenRemainingLifetime.HasValue
-            && accessTokenRemainingLifetime.Value > TimeSpan.Zero)
-        {
-            await _cache.SetAsync(
-                RevokedCacheKeyPrefix + accessTokenJti, "1",
-                accessTokenRemainingLifetime.Value, ct);
-        }
+        // Blacklist the access token jti so in-flight requests are rejected immediately.
+        // Prefer an explicitly-supplied jti/lifetime (a caller revoking its OWN current
+        // session, which knows the access token it was just issued); otherwise fall back to
+        // the session's own persisted AccessTokenJti/AccessTokenExpiresAt -- the same source
+        // RevokeAllAsync already reads below -- so revoking by refresh token alone (no caller-
+        // supplied jti, e.g. BedrockAuthController.Revoke/Logout) still blacklists the still-
+        // live access token instead of leaving it valid until its natural expiry.
+        var jti = !string.IsNullOrEmpty(accessTokenJti) ? accessTokenJti : session?.AccessTokenJti;
+        var lifetime = accessTokenRemainingLifetime
+            ?? (session?.AccessTokenExpiresAt is { } expiresAt ? expiresAt - DateTime.UtcNow : null);
+
+        if (!string.IsNullOrEmpty(jti) && lifetime.HasValue && lifetime.Value > TimeSpan.Zero)
+            await _cache.SetAsync(RevokedCacheKeyPrefix + jti, "1", lifetime.Value, ct);
     }
 
     public async Task RevokeAllAsync(Guid userId, string ip, CancellationToken ct = default)
