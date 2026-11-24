@@ -108,21 +108,15 @@ public sealed class BedrockPasskeyController : ControllerBase
         var result = await _passkeys.CompleteAuthenticationAsync(
             request.AssertionResponse, ip, userAgent, ct);
 
-        // SameSite is intentionally still hardcoded Strict here, NOT read from
-        // _options.Session.RefreshCookieSameSite (unlike BedrockAuthController's own
-        // SetRefreshCookie) -- a pre-existing inconsistency between this controller and
-        // that one, found while making the cookie's Path configurable (both controllers
-        // must now share the SAME Path -- see SessionOptions.RefreshCookiePath's own
-        // remarks for why a per-action Path would break Refresh/Revoke) but deliberately
-        // NOT also fixed here: unifying SameSite too would silently change this flow's
-        // default behavior for every existing consumer of this library that uses passkey
-        // login, which is a separate decision with its own compatibility consequences,
-        // not something to fold into a Path-only change.
-        //
         // Name/Expires realm-resolved (1-BE-09-f) via the SAME IBedrockRealmProvider
         // BedrockAuthController uses -- Expires previously hardcoded AddDays(7) regardless
         // of the real configured TTL (BedrockAuthController.SetRefreshCookie's own remarks
         // cover why that's a real bug, not just a passkey-specific inconsistency).
+        //
+        // SameSite now reads _options.Session.RefreshCookieSameSite, matching
+        // BedrockAuthController.SetRefreshCookie. It previously hardcoded Strict
+        // unconditionally, which silently broke passkey-based session restore in the exact
+        // cross-site scenario the configurable policy exists for (see docs/quality-roadmap.md D2).
         var realm = _realmProvider.Resolve(HttpContext.Request.Host.Host);
         Response.Cookies.Append(
             realm?.RefreshCookieName ?? _options.Session.RefreshCookieName,
@@ -131,7 +125,7 @@ public sealed class BedrockPasskeyController : ControllerBase
             {
                 HttpOnly = true,
                 Secure = true,
-                SameSite = SameSiteMode.Strict,
+                SameSite = ToAspNetSameSite(_options.Session.RefreshCookieSameSite),
                 Expires = DateTimeOffset.UtcNow.Add(realm?.RefreshTokenExpiry ?? _options.Jwt.RefreshTokenExpiry),
                 Path = _options.Session.RefreshCookiePath,
             });
@@ -148,4 +142,12 @@ public sealed class BedrockPasskeyController : ControllerBase
             EnrollmentToken: null,
             MfaGracePeriodEndsAt: null)));
     }
+
+    private static SameSiteMode ToAspNetSameSite(RefreshCookieSameSitePolicy policy) => policy switch
+    {
+        RefreshCookieSameSitePolicy.Strict => SameSiteMode.Strict,
+        RefreshCookieSameSitePolicy.Lax => SameSiteMode.Lax,
+        RefreshCookieSameSitePolicy.None => SameSiteMode.None,
+        _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, null),
+    };
 }
