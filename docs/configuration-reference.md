@@ -97,12 +97,15 @@ Controls account lockout after failed login attempts.
 
 ## SessionOptions
 
-Controls active session limits.
+Controls active session limits and the refresh-token cookie.
 
 | Property | Type | Default | Notes |
 |---|---|---|---|
 | `MaxConcurrentSessions` | `int` | `5` | Maximum simultaneous sessions per user. The oldest session is revoked when the limit is exceeded. |
 | `AbsoluteRefreshExpiry` | `TimeSpan?` | `null` | Hard cap on session lifetime, regardless of refresh activity. `null` disables this. |
+| `RefreshCookieSameSite` | `RefreshCookieSameSitePolicy` (`Strict`/`Lax`/`None`) | `None` | `SameSite` attribute on the refresh-token cookie (always `Secure`+`HttpOnly` regardless of this setting). `None` is correct when the frontend and API are on different origins (including same-hostname-different-port, which schemeful-same-site rules still treat as cross-site) — `Strict`/`Lax` silently drop the cookie on every cross-site refresh in that setup. Set to `Strict`/`Lax` only when frontend and API genuinely share a site. This value is **not** realm-scoped — one policy applies across every realm in a deployment. |
+| `RefreshCookiePath` | `string` | `"/api/v1/auth"` | Cookie `Path` for the refresh-token cookie. Must cover every route that *reads* the cookie back (`Refresh`, `Revoke`) — narrowing it to exclude a write-only route (`Login`, `Verify2FA`, passkey login) is safe, narrowing past a read route is not. Consumers whose `AddBedrockControllers` base path differs from the `api/v1` default must set this explicitly. |
+| `RefreshCookieName` | `string` | `"omni_refresh"` | Cookie name for the refresh token. Used consistently by every action that sets, reads, or deletes it. |
 
 ---
 
