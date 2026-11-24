@@ -10,8 +10,11 @@ namespace Crestacle.Bedrock.HaveIBeenPwned;
 public static class HaveIBeenPwnedExtensions
 {
     /// <summary>
-    /// Replaces the default <see cref="IPasswordValidator"/> with <see cref="HaveIBeenPwnedPasswordValidator"/>,
-    /// which wraps the default complexity checks and additionally rejects passwords found in known data breaches.
+    /// Wraps whatever <see cref="IPasswordValidator"/> is currently registered (the Bedrock
+    /// default, or a caller's own custom complexity rules registered before this call) with
+    /// <see cref="HaveIBeenPwnedPasswordValidator"/>, which additionally rejects passwords found
+    /// in known data breaches. The wrapped validator's own rules still run -- this does not
+    /// replace them.
     /// </summary>
     /// <remarks>
     /// The HIBP API is called with k-anonymity (only the first 5 SHA-1 hex characters are sent).
@@ -26,19 +29,32 @@ public static class HaveIBeenPwnedExtensions
             client.DefaultRequestHeaders.Add("User-Agent", "Crestacle.Bedrock");
         });
 
-        var descriptor = builder.Services
+        var existing = builder.Services
             .FirstOrDefault(d => d.ServiceType == typeof(IPasswordValidator));
-        if (descriptor is not null)
-            builder.Services.Remove(descriptor);
+        if (existing is not null)
+            builder.Services.Remove(existing);
 
-        // Register DefaultPasswordValidator as its concrete type so it can be injected as the
-        // inner (complexity + history) validator without causing a circular IPasswordValidator loop.
+        // Capture whatever was previously registered as IPasswordValidator -- the Bedrock
+        // default, or a caller's own custom complexity rules registered before this call -- so
+        // it keeps running as the inner validator instead of being silently discarded in favor
+        // of a hardcoded DefaultPasswordValidator.
+        Func<IServiceProvider, object> innerFactory = existing switch
+        {
+            { ImplementationFactory: not null } d => d.ImplementationFactory,
+            { ImplementationInstance: not null } d => _ => d.ImplementationInstance,
+            { ImplementationType: not null } d => sp => ActivatorUtilities.CreateInstance(sp, d.ImplementationType),
+            _ => sp => sp.GetRequiredService<DefaultPasswordValidator>(),
+        };
+
+        // Safety net for the fallback branch above (no prior IPasswordValidator registration at
+        // all, which shouldn't happen given AddBedrockAspNetCore's own TryAdd default, but this
+        // extension shouldn't assume call order).
         builder.Services.TryAddScoped<DefaultPasswordValidator>();
 
         builder.Services.AddScoped<IPasswordValidator>(sp =>
             new HaveIBeenPwnedPasswordValidator(
                 sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<DefaultPasswordValidator>()));
+                (IPasswordValidator)innerFactory(sp)));
 
         return builder;
     }
