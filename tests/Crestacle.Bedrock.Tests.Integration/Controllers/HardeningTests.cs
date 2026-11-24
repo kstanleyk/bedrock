@@ -1,11 +1,14 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Models;
 using Crestacle.Bedrock.Core.DTOs;
 using Crestacle.Bedrock.Core.Interfaces;
 using Crestacle.Bedrock.Core.Interfaces.Services;
+using Crestacle.Bedrock.Core.Options;
+using Crestacle.Bedrock.Core.Realm;
 using Crestacle.Bedrock.Tests.Integration.Infrastructure;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -140,6 +143,193 @@ public sealed class HardeningTests : IDisposable
             reject.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         }
         _client.SetRefreshCookie(null);
+    }
+
+    // -------------------------------------------------------------------------
+    // H13/D17 — replaying a stale (already-rotated) refresh token must revoke the LIVE
+    // TIP of the rotation chain too, not just reject the stale token itself.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task RefreshReuseDetection_ReplayingStaleToken_RevokesLiveTipToo()
+    {
+        var email = "reuse-detection-live-tip@example.com";
+        await RegisterAndActivateAsync(email);
+
+        var loginResp = await _client.PostAsJsonAsync(
+            "/api/bedrock/auth/login",
+            new LoginRequest(email, ValidPassword));
+        var token0 = loginResp.GetRefreshCookieValue();
+        token0.Should().NotBeNullOrEmpty();
+
+        // Rotate once: token0 -> token1
+        _client.SetRefreshCookie(token0);
+        var rotate1 = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        rotate1.StatusCode.Should().Be(HttpStatusCode.OK);
+        var token1 = rotate1.GetRefreshCookieValue();
+        token1.Should().NotBeNullOrEmpty();
+
+        // Rotate again: token1 -> token2. token2 is now the LIVE TIP of the chain.
+        _client.SetRefreshCookie(token1);
+        var rotate2 = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        rotate2.StatusCode.Should().Be(HttpStatusCode.OK);
+        var liveTip = rotate2.GetRefreshCookieValue();
+        liveTip.Should().NotBeNullOrEmpty();
+
+        // Replay the now-stale token0. It was already rotated away once (ReplacedByTokenHash is
+        // set), so this is the reuse-of-an-already-rotated-token case, which must revoke the
+        // WHOLE downstream chain -- including the still-active live tip -- not merely reject
+        // this one stale token.
+        _client.SetRefreshCookie(token0);
+        var replay = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        replay.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // The live tip -- which was perfectly valid a moment ago -- must now ALSO be rejected.
+        _client.SetRefreshCookie(liveTip);
+        var liveTipAttempt = await _client.PostAsJsonAsync("/api/bedrock/auth/refresh", new RefreshRequest());
+        _client.SetRefreshCookie(null);
+
+        liveTipAttempt.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            because: "replaying a stale, already-rotated token must revoke the live tip of the " +
+                     "rotation chain too, not just reject the stale token itself");
+    }
+
+    // -------------------------------------------------------------------------
+    // H13/D19 — an oversized User-Agent must be truncated to fit device_fingerprint
+    // (varchar(128)), not bubble up as an unhandled DB exception.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Login_OversizedUserAgent_FingerprintTruncatedNotRejected()
+    {
+        var email = "oversized-ua@example.com";
+        await RegisterAndActivateAsync(email);
+
+        // Far beyond the 128-char device_fingerprint column (and beyond headless Chrome's own
+        // 129-char default UA, the real-world case this guards against).
+        var longUserAgent = new string('A', 300);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/bedrock/auth/login")
+        {
+            // FingerprintHash intentionally omitted -- the controller falls back to the raw
+            // User-Agent header in that case, which is the path that must be truncated.
+            Content = JsonContent.Create(new LoginRequest(email, ValidPassword)),
+        };
+        request.Headers.TryAddWithoutValidation("User-Agent", longUserAgent);
+
+        var resp = await _client.SendAsync(request);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK,
+            because: "an oversized User-Agent must be truncated to fit device_fingerprint, " +
+                     "not surface as a 500 from a DB-level column-length violation");
+
+        var userId = _server.DbContext.UserCredentials.First(c => c.Email == email).UserId;
+        var session = _server.DbContext.Sessions
+            .Where(s => s.UserId == userId)
+            .OrderByDescending(s => s.CreatedAt)
+            .First();
+
+        session.DeviceFingerprint.Length.Should().BeLessOrEqualTo(128);
+        session.DeviceFingerprint.Should().Be(longUserAgent[..128]);
+    }
+
+    // -------------------------------------------------------------------------
+    // H13/D18 — refresh-cookie settings resolution across realms and SameSite policies.
+    // ResolveRefreshCookieSettings (name + expiry) is realm-scoped; SameSite is a global
+    // BedrockOptions setting applied regardless of which realm handled the request.
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(RefreshCookieSameSitePolicy.Strict)]
+    [InlineData(RefreshCookieSameSitePolicy.Lax)]
+    public async Task Login_MultiRealmHost_ResolvesPerRealmCookieNameAndExpiry_WithConfiguredSameSite(
+        RefreshCookieSameSitePolicy sameSite)
+    {
+        var emailSender = new CapturingEmailSender();
+        using var server = new BedrockTestServer(
+            configureOptions: opts => opts.Session.RefreshCookieSameSite = sameSite,
+            configureServices: services =>
+            {
+                services.AddSingleton<IEmailSender>(emailSender);
+                services.AddSingleton<IBedrockRealmProvider, TestMultiRealmProvider>();
+            });
+        var client = server.Client;
+
+        foreach (var (host, realm) in new[]
+                 {
+                     ("realm-a.test", TestMultiRealmProvider.RealmA),
+                     ("realm-b.test", TestMultiRealmProvider.RealmB),
+                 })
+        {
+            var email = $"realm-test-{host}@example.com";
+            await client.PostAsJsonAsync("/api/bedrock/auth/register", new RegisterRequest(email, ValidPassword));
+            var rawToken = CapturingEmailSender.ExtractToken(emailSender.LastBodyFor(email)!);
+            await client.PostAsJsonAsync("/api/bedrock/auth/confirm-email", new ConfirmEmailRequest(rawToken));
+
+            var loginRequest = new HttpRequestMessage(HttpMethod.Post, "/api/bedrock/auth/login")
+            {
+                Content = JsonContent.Create(new LoginRequest(email, ValidPassword)),
+            };
+            loginRequest.Headers.Host = host;
+
+            var beforeLogin = DateTimeOffset.UtcNow;
+            var loginResp = await client.SendAsync(loginRequest);
+            loginResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var cookieHeader = GetFullSetCookieHeader(loginResp, realm.RefreshCookieName);
+            cookieHeader.Should().NotBeNull(
+                because: $"realm '{realm.Name}' resolved from Host '{host}' must set its own configured cookie name");
+
+            cookieHeader!.ToLowerInvariant().Should().Contain(
+                $"samesite={sameSite.ToString().ToLowerInvariant()}",
+                because: "SameSite is a global BedrockOptions.Session setting, not realm-scoped -- " +
+                          "it must match this server's configured policy regardless of which realm handled the request");
+
+            var expiresMatch = Regex.Match(cookieHeader, "expires=([^;]+)", RegexOptions.IgnoreCase);
+            expiresMatch.Success.Should().BeTrue(because: "the refresh cookie must carry an explicit Expires attribute");
+            var expires = DateTimeOffset.Parse(expiresMatch.Groups[1].Value);
+            expires.Should().BeCloseTo(beforeLogin.Add(realm.RefreshTokenExpiry), TimeSpan.FromMinutes(1),
+                because: $"realm '{realm.Name}' overrides RefreshTokenExpiry; the cookie's Expires must follow " +
+                          "that realm value, not the base BedrockOptions default");
+        }
+    }
+
+    /// <summary>Maps two fixed hosts to two distinct realms; any other host resolves to null (base-options fallback).</summary>
+    private sealed class TestMultiRealmProvider : IBedrockRealmProvider
+    {
+        public static readonly BedrockRealm RealmA = new()
+        {
+            Name = "realm-a",
+            MfaMandatory = false,
+            MfaGracePeriodDays = 0,
+            RefreshCookieName = "realm_a_refresh",
+            RefreshTokenExpiry = TimeSpan.FromHours(1),
+            FrontendBaseUrl = "https://realm-a.test",
+        };
+
+        public static readonly BedrockRealm RealmB = new()
+        {
+            Name = "realm-b",
+            MfaMandatory = false,
+            MfaGracePeriodDays = 0,
+            RefreshCookieName = "realm_b_refresh",
+            RefreshTokenExpiry = TimeSpan.FromHours(2),
+            FrontendBaseUrl = "https://realm-b.test",
+        };
+
+        public BedrockRealm? Resolve(string? host) => host switch
+        {
+            "realm-a.test" => RealmA,
+            "realm-b.test" => RealmB,
+            _ => null,
+        };
+    }
+
+    private static string? GetFullSetCookieHeader(HttpResponseMessage response, string cookieName)
+    {
+        if (!response.Headers.TryGetValues("Set-Cookie", out var headers))
+            return null;
+        return headers.FirstOrDefault(h => h.StartsWith($"{cookieName}=", StringComparison.Ordinal));
     }
 
     // -------------------------------------------------------------------------

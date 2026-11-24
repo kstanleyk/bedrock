@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Crestacle.Bedrock.AspNetCore.Services;
@@ -245,6 +246,76 @@ public sealed class PasskeyServiceTests
 
         result.Tokens.Should().NotBeNull();
         result.Tokens!.AccessToken.Should().Be("access");
+    }
+
+    // -------------------------------------------------------------------------
+    // H13 -- origin mismatch must be rejected. Every other test in this file mocks IFido2
+    // with NSubstitute, which answers every call with a canned result regardless of input --
+    // origin verification lives entirely inside Fido2NetLib itself (PasskeyService never
+    // inspects clientDataJson's own "origin" field), so a mocked IFido2 cannot exercise this
+    // path at all. This test wires PasskeyService to the REAL Fido2 implementation instead,
+    // configured with a fixed RP/origin, and sends an assertion whose clientDataJson claims a
+    // different origin -- confirmed empirically (see commit description) that Fido2NetLib
+    // rejects on origin before it even reaches signature verification, so no real key material
+    // is needed to isolate this check.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task CompleteAuthentication_MismatchedOrigin_IsRejected()
+    {
+        const string rpId = "example.test";
+        const string configuredOrigin = "https://example.test";
+        const string attackerOrigin = "https://attacker.example";
+
+        var realFido2 = new Fido2(new Fido2Configuration
+        {
+            ServerDomain = rpId,
+            ServerName = "Test",
+            Origins = new HashSet<string> { configuredOrigin },
+        });
+
+        var challenge = new byte[32];
+        var storedOptions = new FA { Challenge = challenge, RpId = rpId };
+        _cache.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(storedOptions.ToJson());
+
+        var storedCred = PasskeyCredential.Create(UserId, FakeCredId, FakePubKey, signCount: 0);
+        _passkeyRepo.GetByCredentialIdAsync(Arg.Any<byte[]>(), Arg.Any<CancellationToken>())
+            .Returns(storedCred);
+
+        // A correctly-formed authenticatorData (right rpIdHash, user-present flag set) so the
+        // ONLY thing wrong with this assertion is the origin -- isolating exactly what's under
+        // test, not incidentally failing on some other check first.
+        var rpIdHash = SHA256.HashData(Encoding.UTF8.GetBytes(rpId));
+        var authenticatorData = new byte[37];
+        Array.Copy(rpIdHash, authenticatorData, 32);
+        authenticatorData[32] = 0x01; // user-present
+
+        var clientData = new { type = "webauthn.get", challenge = Base64UrlEncode(challenge), origin = attackerOrigin };
+        var clientDataBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(clientData));
+
+        var assertion = new AuthenticatorAssertionRawResponse
+        {
+            RawId = FakeCredId,
+            Response = new AuthenticatorAssertionRawResponse.AssertionResponse
+            {
+                ClientDataJson = clientDataBytes,
+                AuthenticatorData = authenticatorData,
+                Signature = new byte[64],
+            },
+        };
+        var assertionJson = JsonSerializer.Serialize(assertion,
+            new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+
+        var svc = new PasskeyService(
+            realFido2, _passkeyRepo, _credentialRepo, _auditRepo, _refreshTokens,
+            _cache, _unitOfWork, Microsoft.Extensions.Logging.Abstractions.NullLogger<PasskeyService>.Instance);
+
+        await svc.Invoking(s => s.CompleteAuthenticationAsync(assertionJson, "127.0.0.1", "test-agent"))
+            .Should().ThrowAsync<Fido2VerificationException>()
+            .WithMessage("*origin*",
+                because: "a clientDataJson origin that doesn't match the configured RP origin must be " +
+                         "rejected -- this is enforced by Fido2NetLib itself; PasskeyService does no " +
+                         "origin checking of its own and must not swallow or weaken this rejection");
     }
 
     // -------------------------------------------------------------------------
