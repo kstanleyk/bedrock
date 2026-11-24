@@ -157,10 +157,16 @@ Implement `IBedrockTokenIssuer` to delegate access token issuance to your IDP:
 ```csharp
 public class MyExternalIdpTokenIssuer : IBedrockTokenIssuer
 {
-    public Task<TokenPair> IssueAsync(AccessTokenDescriptor descriptor,
+    public Task<AccessTokenDescriptor> IssueAccessTokenAsync(
+        Guid userId,
+        string email,
+        IEnumerable<string> roles,
+        string? tenantId,
+        IDictionary<string, string>? extraClaims,
         CancellationToken ct = default)
     {
-        // Call your IDP's token endpoint and return the token pair
+        // Call your IDP's token endpoint and return an AccessTokenDescriptor
+        // (token string, its unique ID, and UTC expiry).
     }
 }
 ```

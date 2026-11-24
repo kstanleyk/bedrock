@@ -4,7 +4,7 @@ Bedrock is a modular authentication and authorization library for ASP.NET Core. 
 
 The companion library [Crestacle.Sentinel](docs/integrations/sentinel.md) adds role-based access control (RBAC) on top of Bedrock's identity layer.
 
-**Version:** 1.4.2 | **Target frameworks:** .NET 10, .NET 8 | **License:** MIT
+**Version:** 1.6.3 | **Target framework:** .NET 10 | **License:** MIT
 
 ---
 

@@ -6,7 +6,7 @@ This guide walks through installing Bedrock, wiring it into an ASP.NET Core appl
 
 ## Prerequisites
 
-- .NET 10 or .NET 8
+- .NET 10
 - An EF Core-compatible database (PostgreSQL, SQL Server, SQLite, etc.)
 - An SMTP provider or custom email sender (required for email verification and password reset)
 
@@ -124,11 +124,31 @@ Bedrock uses `IEmailSender` for verification emails, password resets, magic link
 ```csharp
 public class SmtpEmailSender : IEmailSender
 {
-    public Task SendAsync(string to, string subject, string htmlBody,
-        CancellationToken ct = default)
+    public Task SendEmailVerificationAsync(string toEmail, string verificationUrl, CancellationToken ct = default)
+        => SendAsync(toEmail, "Verify your email", $"Click to verify: {verificationUrl}", ct);
+
+    public Task SendPasswordResetAsync(string toEmail, string resetUrl, CancellationToken ct = default)
+        => SendAsync(toEmail, "Reset your password", $"Click to reset: {resetUrl}", ct);
+
+    public Task SendAccountLockedAsync(string toEmail, DateTime lockoutEnd, CancellationToken ct = default)
+        => SendAsync(toEmail, "Account locked", $"Your account is locked until {lockoutEnd:u}.", ct);
+
+    public Task SendMfaOtpAsync(string toEmail, string code, CancellationToken ct = default)
+        => SendAsync(toEmail, "Your verification code", $"Your code is: {code}", ct);
+
+    public Task SendAsync(string toEmail, string subject, string htmlBody, CancellationToken ct = default)
     {
         // Send using your SMTP client
     }
+
+    public Task SendEmailChangeVerificationAsync(string newEmail, string confirmationUrl, CancellationToken ct = default)
+        => SendAsync(newEmail, "Confirm your new email", $"Click to confirm: {confirmationUrl}", ct);
+
+    public Task SendEmailChangeNotificationAsync(string oldEmail, CancellationToken ct = default)
+        => SendAsync(oldEmail, "Email change requested", "A change to your account's email address was requested.", ct);
+
+    public Task SendMagicLinkAsync(string toEmail, string magicLinkUrl, CancellationToken ct = default)
+        => SendAsync(toEmail, "Your login link", $"Click to log in: {magicLinkUrl}", ct);
 }
 ```
 
