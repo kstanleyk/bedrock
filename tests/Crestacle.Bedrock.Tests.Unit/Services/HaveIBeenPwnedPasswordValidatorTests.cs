@@ -57,14 +57,14 @@ public sealed class HaveIBeenPwnedPasswordValidatorTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void IsValid_BreachedPassword_ReturnsFalseWithBreachMessage()
+    public async Task IsValid_BreachedPassword_ReturnsFalseWithBreachMessage()
     {
         var suffix = Sha1Hex("password")[5..];
         // The HIBP range response contains our suffix with a hit count.
         var body = $"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:1\r\n{suffix}:9876543\r\nBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB:2\r\n";
         var validator = BuildWithResponse(body);
 
-        var valid = validator.IsValid("password", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("password");
 
         valid.Should().BeFalse();
         errors.Should().ContainSingle()
@@ -73,35 +73,36 @@ public sealed class HaveIBeenPwnedPasswordValidatorTests
     }
 
     [Fact]
-    public void IsValid_UnknownPassword_ReturnsTrue()
+    public async Task IsValid_UnknownPassword_ReturnsTrue()
     {
         // Response contains entries for other passwords — our suffix is absent.
         const string body = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:1\r\nBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB:2\r\n";
         var validator = BuildWithResponse(body);
 
-        var valid = validator.IsValid("SuperSecure!X9y@2024", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("SuperSecure!X9y@2024");
 
         valid.Should().BeTrue();
         errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void IsValid_HttpFailure_ReturnsTrueFailOpen()
+    public async Task IsValid_HttpFailure_ReturnsTrueFailOpen()
     {
         // Network error must never block a registration attempt.
         var validator = BuildWithException(new HttpRequestException("Simulated network failure"));
 
-        var valid = validator.IsValid("AnyPassword1!", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("AnyPassword1!");
 
         valid.Should().BeTrue();
         errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void IsPreviouslyUsed_DelegatesToInner()
+    public async Task IsPreviouslyUsed_DelegatesToInner()
     {
         var innerSub = Substitute.For<IPasswordValidator>();
-        innerSub.IsPreviouslyUsed("pw", Arg.Any<IEnumerable<string>>()).Returns(true);
+        innerSub.IsPreviouslyUsedAsync("pw", Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
 
         var httpClient = new HttpClient(new StubHandler(HttpStatusCode.OK, string.Empty))
         {
@@ -112,7 +113,7 @@ public sealed class HaveIBeenPwnedPasswordValidatorTests
 
         var validator = new HaveIBeenPwnedPasswordValidator(factory, innerSub);
 
-        validator.IsPreviouslyUsed("pw", []).Should().BeTrue();
+        (await validator.IsPreviouslyUsedAsync("pw", [])).Should().BeTrue();
     }
 
     // -------------------------------------------------------------------------
@@ -145,12 +146,10 @@ public sealed class HaveIBeenPwnedPasswordValidatorTests
 
     private sealed class AlwaysValidPasswordValidator : IPasswordValidator
     {
-        public bool IsValid(string password, out IReadOnlyList<string> errors)
-        {
-            errors = [];
-            return true;
-        }
+        public Task<(bool IsValid, IReadOnlyList<string> Errors)> IsValidAsync(string password, CancellationToken ct = default)
+            => Task.FromResult<(bool, IReadOnlyList<string>)>((true, []));
 
-        public bool IsPreviouslyUsed(string password, IEnumerable<string> hashes) => false;
+        public Task<bool> IsPreviouslyUsedAsync(string password, IEnumerable<string> hashes, CancellationToken ct = default)
+            => Task.FromResult(false);
     }
 }

@@ -16,7 +16,7 @@ public sealed class HaveIBeenPwnedExtensionsTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void WithHaveIBeenPwnedPasswordValidator_InstanceRegistration_PreservesCustomValidatorAsInner()
+    public async Task WithHaveIBeenPwnedPasswordValidator_InstanceRegistration_PreservesCustomValidatorAsInner()
     {
         var services = new ServiceCollection();
         services.AddSingleton<IPasswordValidator>(new SentinelPasswordValidator());
@@ -29,14 +29,14 @@ public sealed class HaveIBeenPwnedExtensionsTests
 
         resolved.Should().BeOfType<HaveIBeenPwnedPasswordValidator>();
 
-        var valid = resolved.IsValid("irrelevant", out var errors);
+        var (valid, errors) = await resolved.IsValidAsync("irrelevant");
 
         valid.Should().BeFalse("the custom validator's own rule must still run");
         errors.Should().ContainSingle().Which.Should().Be(SentinelPasswordValidator.SentinelError);
     }
 
     [Fact]
-    public void WithHaveIBeenPwnedPasswordValidator_FactoryRegistration_PreservesCustomValidatorAsInner()
+    public async Task WithHaveIBeenPwnedPasswordValidator_FactoryRegistration_PreservesCustomValidatorAsInner()
     {
         var services = new ServiceCollection();
         services.AddScoped<IPasswordValidator>(_ => new SentinelPasswordValidator());
@@ -48,14 +48,14 @@ public sealed class HaveIBeenPwnedExtensionsTests
         using var scope = provider.CreateScope();
         var resolved = scope.ServiceProvider.GetRequiredService<IPasswordValidator>();
 
-        var valid = resolved.IsValid("irrelevant", out var errors);
+        var (valid, errors) = await resolved.IsValidAsync("irrelevant");
 
         valid.Should().BeFalse("a factory-registered custom validator must still run, not be replaced");
         errors.Should().ContainSingle().Which.Should().Be(SentinelPasswordValidator.SentinelError);
     }
 
     [Fact]
-    public void WithHaveIBeenPwnedPasswordValidator_CustomValidator_IsPreviouslyUsedStillDelegatesToIt()
+    public async Task WithHaveIBeenPwnedPasswordValidator_CustomValidator_IsPreviouslyUsedStillDelegatesToIt()
     {
         var services = new ServiceCollection();
         services.AddSingleton<IPasswordValidator>(new SentinelPasswordValidator());
@@ -66,7 +66,7 @@ public sealed class HaveIBeenPwnedExtensionsTests
         using var provider = services.BuildServiceProvider();
         var resolved = provider.GetRequiredService<IPasswordValidator>();
 
-        resolved.IsPreviouslyUsed("irrelevant", []).Should().BeTrue(
+        (await resolved.IsPreviouslyUsedAsync("irrelevant", [])).Should().BeTrue(
             "IsPreviouslyUsed must still be answered by the caller's own custom validator");
     }
 
@@ -80,12 +80,10 @@ public sealed class HaveIBeenPwnedExtensionsTests
     {
         public const string SentinelError = "SENTINEL-CUSTOM-RULE-REJECTED";
 
-        public bool IsValid(string password, out IReadOnlyList<string> errors)
-        {
-            errors = [SentinelError];
-            return false;
-        }
+        public Task<(bool IsValid, IReadOnlyList<string> Errors)> IsValidAsync(string password, CancellationToken ct = default)
+            => Task.FromResult<(bool, IReadOnlyList<string>)>((false, [SentinelError]));
 
-        public bool IsPreviouslyUsed(string password, IEnumerable<string> hashes) => true;
+        public Task<bool> IsPreviouslyUsedAsync(string password, IEnumerable<string> hashes, CancellationToken ct = default)
+            => Task.FromResult(true);
     }
 }

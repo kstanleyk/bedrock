@@ -31,19 +31,17 @@ public sealed class CommonPasswordValidator : IPasswordValidator
     }
 
     /// <inheritdoc/>
-    public bool IsValid(string password, out IReadOnlyList<string> errors)
+    public Task<(bool IsValid, IReadOnlyList<string> Errors)> IsValidAsync(string password, CancellationToken ct = default)
     {
         if (_denyList is not null && _denyList.Contains(password))
-        {
-            errors = [DenyMessage];
-            return false;
-        }
-        errors = [];
-        return true;
+            return Task.FromResult<(bool, IReadOnlyList<string>)>((false, [DenyMessage]));
+
+        return Task.FromResult<(bool, IReadOnlyList<string>)>((true, []));
     }
 
     /// <inheritdoc/>
-    public bool IsPreviouslyUsed(string password, IEnumerable<string> hashes) => false;
+    public Task<bool> IsPreviouslyUsedAsync(string password, IEnumerable<string> hashes, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     private static HashSet<string> LoadEmbedded()
     {

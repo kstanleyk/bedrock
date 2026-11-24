@@ -45,10 +45,11 @@ public sealed class CommonPasswordValidatorTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void IsValid_PathNull_PassesEverything()
+    public async Task IsValid_PathNull_PassesEverything()
     {
         var validator = Build(null);
-        validator.IsValid("password", out var errors).Should().BeTrue();
+        var (valid, errors) = await validator.IsValidAsync("password");
+        valid.Should().BeTrue();
         errors.Should().BeEmpty();
     }
 
@@ -57,13 +58,13 @@ public sealed class CommonPasswordValidatorTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void IsValid_PasswordInPlainTextFile_ReturnsFalse()
+    public async Task IsValid_PasswordInPlainTextFile_ReturnsFalse()
     {
         var path = WritePlainTempFile(["letmein", "monkey", "dragon"]);
         try
         {
             var validator = Build(path);
-            var result = validator.IsValid("monkey", out var errors);
+            var (result, errors) = await validator.IsValidAsync("monkey");
             result.Should().BeFalse();
             errors.Should().ContainSingle().Which.Should().Contain("too common");
         }
@@ -71,13 +72,14 @@ public sealed class CommonPasswordValidatorTests
     }
 
     [Fact]
-    public void IsValid_PasswordNotInList_ReturnsTrue()
+    public async Task IsValid_PasswordNotInList_ReturnsTrue()
     {
         var path = WritePlainTempFile(["letmein", "monkey"]);
         try
         {
             var validator = Build(path);
-            validator.IsValid("Wr@ppedC0met#9x!", out var errors).Should().BeTrue();
+            var (valid, errors) = await validator.IsValidAsync("Wr@ppedC0met#9x!");
+            valid.Should().BeTrue();
             errors.Should().BeEmpty();
         }
         finally { File.Delete(path); }
@@ -88,13 +90,14 @@ public sealed class CommonPasswordValidatorTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void IsValid_PasswordInGzipFile_ReturnsFalse()
+    public async Task IsValid_PasswordInGzipFile_ReturnsFalse()
     {
         var path = WriteGzipTempFile(["toppassword", "anothercommon"]);
         try
         {
             var validator = Build(path);
-            validator.IsValid("toppassword", out var errors).Should().BeFalse();
+            var (valid, errors) = await validator.IsValidAsync("toppassword");
+            valid.Should().BeFalse();
             errors.Should().ContainSingle().Which.Should().Contain("too common");
         }
         finally { File.Delete(path); }
@@ -105,15 +108,15 @@ public sealed class CommonPasswordValidatorTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void IsValid_DenyListMatchIsCaseInsensitive()
+    public async Task IsValid_DenyListMatchIsCaseInsensitive()
     {
         var path = WritePlainTempFile(["password"]);
         try
         {
             var validator = Build(path);
-            validator.IsValid("PASSWORD", out _).Should().BeFalse();
-            validator.IsValid("Password", out _).Should().BeFalse();
-            validator.IsValid("pAsSwOrD", out _).Should().BeFalse();
+            (await validator.IsValidAsync("PASSWORD")).IsValid.Should().BeFalse();
+            (await validator.IsValidAsync("Password")).IsValid.Should().BeFalse();
+            (await validator.IsValidAsync("pAsSwOrD")).IsValid.Should().BeFalse();
         }
         finally { File.Delete(path); }
     }
@@ -123,27 +126,29 @@ public sealed class CommonPasswordValidatorTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void IsValid_EmbeddedSentinel_RejectsCommonPassword()
+    public async Task IsValid_EmbeddedSentinel_RejectsCommonPassword()
     {
         var validator = Build("embedded");
-        validator.IsValid("password", out var errors).Should().BeFalse();
+        var (valid, errors) = await validator.IsValidAsync("password");
+        valid.Should().BeFalse();
         errors.Should().ContainSingle().Which.Should().Contain("too common");
     }
 
     [Fact]
-    public void IsValid_EmbeddedSentinel_AcceptsStrongPassword()
+    public async Task IsValid_EmbeddedSentinel_AcceptsStrongPassword()
     {
         var validator = Build("embedded");
-        validator.IsValid("Wr@ppedC0met#9x!", out var errors).Should().BeTrue();
+        var (valid, errors) = await validator.IsValidAsync("Wr@ppedC0met#9x!");
+        valid.Should().BeTrue();
         errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void IsValid_EmbeddedSentinel_CaseInsensitiveEmbeddedCheck()
+    public async Task IsValid_EmbeddedSentinel_CaseInsensitiveEmbeddedCheck()
     {
         var validator = Build("embedded");
         // "password" is in the embedded list; "PASSWORD" must also be rejected
-        validator.IsValid("PASSWORD", out _).Should().BeFalse();
+        (await validator.IsValidAsync("PASSWORD")).IsValid.Should().BeFalse();
     }
 
     // -------------------------------------------------------------------------
@@ -151,9 +156,9 @@ public sealed class CommonPasswordValidatorTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void IsPreviouslyUsed_AlwaysReturnsFalse()
+    public async Task IsPreviouslyUsed_AlwaysReturnsFalse()
     {
         var validator = Build(null);
-        validator.IsPreviouslyUsed("anything", []).Should().BeFalse();
+        (await validator.IsPreviouslyUsedAsync("anything", [])).Should().BeFalse();
     }
 }

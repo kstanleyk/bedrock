@@ -108,7 +108,8 @@ internal sealed partial class CredentialService : ICredentialService
         Guid userId, string email, string password, string? tenantId = null,
         bool sendVerificationEmail = true, CancellationToken ct = default)
     {
-        if (!_validator.IsValid(password, out var errors))
+        var (passwordValid, errors) = await _validator.IsValidAsync(password, ct);
+        if (!passwordValid)
             throw new BedrockValidationException(errors);
 
         if (await _credentialRepo.ExistsByEmailAsync(email, ct))
@@ -202,13 +203,14 @@ internal sealed partial class CredentialService : ICredentialService
         if (!_hasher.Verify(currentPassword, credential.PasswordHash))
             throw new BedrockValidationException("Current password is incorrect.");
 
-        if (!_validator.IsValid(newPassword, out var errors))
+        var (passwordValid, errors) = await _validator.IsValidAsync(newPassword, ct);
+        if (!passwordValid)
             throw new BedrockValidationException(errors);
 
         if (_options.Password.HistoryDepth > 0)
         {
             var history = await _historyRepo.GetRecentByUserAsync(userId, _options.Password.HistoryDepth, ct);
-            if (_validator.IsPreviouslyUsed(newPassword, history.Select(h => h.PasswordHash)))
+            if (await _validator.IsPreviouslyUsedAsync(newPassword, history.Select(h => h.PasswordHash), ct))
                 throw new BedrockValidationException("Password has been used recently and cannot be reused.");
         }
 
@@ -282,13 +284,14 @@ internal sealed partial class CredentialService : ICredentialService
         var credential = await _credentialRepo.GetByUserIdAsync(token.UserId, ct)
             ?? throw new BedrockValidationException("The password reset link is invalid or has expired.");
 
-        if (!_validator.IsValid(newPassword, out var errors))
+        var (passwordValid, errors) = await _validator.IsValidAsync(newPassword, ct);
+        if (!passwordValid)
             throw new BedrockValidationException(errors);
 
         if (_options.Password.HistoryDepth > 0)
         {
             var history = await _historyRepo.GetRecentByUserAsync(token.UserId, _options.Password.HistoryDepth, ct);
-            if (_validator.IsPreviouslyUsed(newPassword, history.Select(h => h.PasswordHash)))
+            if (await _validator.IsPreviouslyUsedAsync(newPassword, history.Select(h => h.PasswordHash), ct))
                 throw new BedrockValidationException("Password has been used recently and cannot be reused.");
         }
 
