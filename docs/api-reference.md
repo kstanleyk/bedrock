@@ -302,7 +302,7 @@ Permanently deletes the authenticated user's account.
 ### Change password
 
 ```
-POST account/change-password
+POST auth/change-password
 ```
 
 **Request**
@@ -669,12 +669,16 @@ Revokes all sessions for the authenticated user, including the current one.
 
 ---
 
-## Audit (self-service)
+## Audit (admin)
 
 ```
 GET audit
 Authorization: Bearer <access-token>
 ```
+
+Requires the `BedrockAdmin` policy -- the `bedrock_admin` claim must be present in the access
+token (provided by `IBedrockClaimsEnricher`). Not self-service: a regular authenticated user
+cannot query another user's (or their own) audit trail through this endpoint.
 
 Query parameters: `userId`, `eventType`, `from` (ISO 8601), `to` (ISO 8601), `page` (default 1), `pageSize` (default 50, max 200).
 

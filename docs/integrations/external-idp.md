@@ -55,21 +55,26 @@ public class MyExternalIdpTokenIssuer : IBedrockTokenIssuer
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<TokenPair> IssueAsync(
-        AccessTokenDescriptor descriptor,
+    public async Task<AccessTokenDescriptor> IssueAccessTokenAsync(
+        Guid userId,
+        string email,
+        IEnumerable<string> roles,
+        string? tenantId,
+        IDictionary<string, string>? extraClaims,
         CancellationToken ct = default)
     {
-        // descriptor contains: UserId, Email, TenantId, ExtraClaims
         // Call your IDP's token endpoint using the Resource Owner Password flow,
-        // a custom grant, or a token exchange (RFC 8693).
+        // a custom grant, or a token exchange (RFC 8693), using userId/email/roles/
+        // tenantId/extraClaims to construct the claims or subject for the IDP request.
 
         var client = _httpClientFactory.CreateClient("idp");
-        // ... call IDP and return TokenPair
+        // ... call IDP and return an AccessTokenDescriptor (token string, its unique
+        // ID, and UTC expiry) so Bedrock's session layer can track revocation.
     }
 }
 ```
 
-`AccessTokenDescriptor` provides the user context that Bedrock has resolved. Use it to construct the claims or subject for your IDP token request.
+`AccessTokenDescriptor` is what your implementation returns -- the token string, its unique ID (used for JTI-based revocation), and its UTC expiry.
 
 ---
 
@@ -82,7 +87,7 @@ To validate provider tokens, implement `IExternalIdentityValidator` for each pro
 ```csharp
 public class GoogleIdentityValidator : IExternalIdentityValidator
 {
-    public string Provider => "google";
+    public string ProviderName => "google";
 
     public async Task<ExternalIdentityClaims?> ValidateAsync(
         string providerToken, CancellationToken ct = default)

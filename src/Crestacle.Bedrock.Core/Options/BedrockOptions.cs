@@ -59,5 +59,19 @@ public sealed class BedrockOptions
                 "This key is required even when Jwt.ExternalTokenIssuer = true because " +
                 "Bedrock uses it to sign and validate step-up, MFA challenge, and " +
                 "enrollment tokens regardless of who issues access tokens.");
+
+        if (Jwt.SigningCertificate is null && !string.IsNullOrWhiteSpace(Jwt.SigningKey) &&
+            Jwt.SigningKey.Length < MinimumSigningKeyLength)
+            throw new InvalidOperationException(
+                $"BedrockOptions: Jwt.SigningKey is {Jwt.SigningKey.Length} characters long, " +
+                $"but at least {MinimumSigningKeyLength} are required for HS256. A short or " +
+                "predictable key makes tokens forgeable. Generate a suitable key with " +
+                "`openssl rand -base64 32` and store it in a secrets manager.");
     }
+
+    /// <summary>
+    /// Minimum character length required for <see cref="JwtOptions.SigningKey"/> (HS256).
+    /// Not enforced on the <see cref="JwtOptions.SigningCertificate"/> (RS256) path.
+    /// </summary>
+    private const int MinimumSigningKeyLength = 32;
 }

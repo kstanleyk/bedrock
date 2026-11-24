@@ -28,7 +28,7 @@ public class JwtTenantContext : ITenantContext
         _httpContextAccessor = accessor;
     }
 
-    public string? TenantId =>
+    public string? GetTenantId() =>
         _httpContextAccessor.HttpContext?.User.FindFirst("tenant_id")?.Value;
 }
 ```
