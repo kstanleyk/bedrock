@@ -17,15 +17,28 @@ internal sealed class RefreshTokenRepository : IRefreshTokenRepository
     public async Task AddAsync(RefreshToken token, CancellationToken ct = default)
         => await _context.RefreshTokens.AddAsync(token, ct);
 
-    public Task UpdateAsync(RefreshToken token, CancellationToken ct = default)
+    public async Task UpdateAsync(RefreshToken token, CancellationToken ct = default)
     {
         var tracked = _context.ChangeTracker.Entries<RefreshToken>()
             .FirstOrDefault(e => e.Entity.Id == token.Id);
         if (tracked is not null)
+        {
             tracked.CurrentValues.SetValues(token);
-        else
-            _context.RefreshTokens.Update(token);
-        return Task.CompletedTask;
+            return;
+        }
+
+        // Same fix as SessionRepository/CredentialRepository.UpdateAsync (see their longer
+        // comment for the full explanation): GetByHashAsync reads AsNoTracking, so a blanket
+        // `_context.RefreshTokens.Update(token)` attach on a genuinely fresh scope loses the
+        // row's real concurrency-token (RowVersion/xmin) value and always reports "0 rows
+        // affected" (DbUpdateConcurrencyException) on every real call, not just under
+        // contention -- confirmed live against Postgres during the pentest-hardening
+        // completion smoke pass, where every refresh deterministically 409'd. A tracked stub
+        // loaded by primary key first captures the real, current token value before
+        // CurrentValues.SetValues overlays the caller's own field values onto it.
+        var trackedStub = await _context.RefreshTokens.FindAsync([token.Id], ct)
+            ?? throw new InvalidOperationException($"RefreshToken {token.Id} not found for update.");
+        _context.Entry(trackedStub).CurrentValues.SetValues(token);
     }
 
     public async Task RevokeAllForUserAsync(Guid userId, string byIp, CancellationToken ct = default)
