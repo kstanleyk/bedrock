@@ -46,6 +46,15 @@ public sealed class UserCredential
     /// <summary>UTC end of lockout window; null means not locked.</summary>
     public DateTime? LockoutEnd { get; private set; }
 
+    /// <summary>
+    /// True when the active lockout was set by an administrator via <see cref="AdminLock"/>
+    /// rather than by <see cref="RecordFailedLogin"/>'s automatic timed lockout. Distinguishes
+    /// the two so callers can avoid surfacing the 100-year <see cref="LockoutEnd"/> sentinel
+    /// (used mechanically to keep <see cref="IsLockedOut"/> true indefinitely) as a literal date
+    /// in a user-facing message.
+    /// </summary>
+    public bool IsAdminLocked { get; private set; }
+
     /// <summary>UTC end of MFA grace period; null means no active grace period.</summary>
     public DateTime? MfaGracePeriodEndsAt { get; private set; }
 
@@ -128,6 +137,7 @@ public sealed class UserCredential
     {
         FailedLoginAttempts = 0;
         LockoutEnd = null;
+        IsAdminLocked = false;
         if (Status == AccountStatus.Locked)
             Status = AccountStatus.Active;
         UpdatedAt = DateTime.UtcNow;
@@ -213,10 +223,16 @@ public sealed class UserCredential
         UpdatedAt = DateTime.UtcNow;
     }
 
-    /// <summary>Administratively locks the account indefinitely (100-year lockout end).</summary>
+    /// <summary>
+    /// Administratively locks the account indefinitely. <see cref="LockoutEnd"/> is still set to a
+    /// 100-year-out sentinel so <see cref="IsLockedOut"/> keeps working unchanged for every existing
+    /// caller that only reads that one field; <see cref="IsAdminLocked"/> is the explicit flag
+    /// callers should branch on when deciding what to tell the user.
+    /// </summary>
     public void AdminLock()
     {
         LockoutEnd = DateTime.UtcNow.AddYears(100);
+        IsAdminLocked = true;
         Status = AccountStatus.Locked;
         UpdatedAt = DateTime.UtcNow;
     }
@@ -225,6 +241,7 @@ public sealed class UserCredential
     public void AdminUnlock()
     {
         LockoutEnd = null;
+        IsAdminLocked = false;
         FailedLoginAttempts = 0;
         if (Status == AccountStatus.Locked)
             Status = AccountStatus.Active;

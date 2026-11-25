@@ -100,7 +100,8 @@ internal sealed class PendingAssignmentRepository(
             $"{pending.UserId}/{pending.RoleId}",
             reviewer,
             actor.IpAddress,
-            actor.UserAgent));
+            actor.UserAgent,
+            tenantId));
 
         // Explicit transaction boundary: the PendingAssignment status change and the
         // new UserRole are two separate aggregates and must commit or roll back together.

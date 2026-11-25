@@ -20,90 +20,90 @@ public sealed class DefaultPasswordValidatorTests
     }
 
     [Fact]
-    public void IsValid_StrongPassword_ReturnsTrue()
+    public async Task IsValid_StrongPassword_ReturnsTrue()
     {
         var validator = BuildValidator();
-        var valid = validator.IsValid("StrongP@ssw0rd!", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("StrongP@ssw0rd!");
         valid.Should().BeTrue();
         errors.Should().BeEmpty();
     }
 
     [Fact]
-    public void IsValid_TooShort_ReturnsFalse()
+    public async Task IsValid_TooShort_ReturnsFalse()
     {
         var validator = BuildValidator(new PasswordOptions { MinLength = 12 });
-        var valid = validator.IsValid("Short1!", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("Short1!");
         valid.Should().BeFalse();
         errors.Should().ContainSingle(e => e.Contains("12 characters"));
     }
 
     [Fact]
-    public void IsValid_NoUppercase_ReturnsFalse()
+    public async Task IsValid_NoUppercase_ReturnsFalse()
     {
         var validator = BuildValidator();
-        var valid = validator.IsValid("nouppercase1!", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("nouppercase1!");
         valid.Should().BeFalse();
         errors.Should().ContainSingle(e => e.Contains("uppercase"));
     }
 
     [Fact]
-    public void IsValid_NoLowercase_ReturnsFalse()
+    public async Task IsValid_NoLowercase_ReturnsFalse()
     {
         var validator = BuildValidator();
-        var valid = validator.IsValid("NOLOWERCASE1!", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("NOLOWERCASE1!");
         valid.Should().BeFalse();
         errors.Should().ContainSingle(e => e.Contains("lowercase"));
     }
 
     [Fact]
-    public void IsValid_NoDigit_ReturnsFalse()
+    public async Task IsValid_NoDigit_ReturnsFalse()
     {
         var validator = BuildValidator();
-        var valid = validator.IsValid("NoDigitPass!", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("NoDigitPass!");
         valid.Should().BeFalse();
         errors.Should().ContainSingle(e => e.Contains("digit"));
     }
 
     [Fact]
-    public void IsValid_NoSpecialChar_ReturnsFalse()
+    public async Task IsValid_NoSpecialChar_ReturnsFalse()
     {
         var validator = BuildValidator();
-        var valid = validator.IsValid("NoSpecialChar1", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("NoSpecialChar1");
         valid.Should().BeFalse();
         errors.Should().ContainSingle(e => e.Contains("special"));
     }
 
     [Fact]
-    public void IsValid_MultipleViolations_ReportsAll()
+    public async Task IsValid_MultipleViolations_ReportsAll()
     {
         var validator = BuildValidator();
-        var valid = validator.IsValid("short", out var errors);
+        var (valid, errors) = await validator.IsValidAsync("short");
         valid.Should().BeFalse();
         errors.Count.Should().BeGreaterThan(1);
     }
 
     [Fact]
-    public void IsPreviouslyUsed_MatchingHash_ReturnsTrue()
+    public async Task IsPreviouslyUsed_MatchingHash_ReturnsTrue()
     {
         var hasher = new Argon2idPasswordHasher();
         var hash = hasher.Hash("Password1!");
         var validator = BuildValidator();
-        validator.IsPreviouslyUsed("Password1!", [hash]).Should().BeTrue();
+        (await validator.IsPreviouslyUsedAsync("Password1!", [hash])).Should().BeTrue();
     }
 
     [Fact]
-    public void IsPreviouslyUsed_NoMatch_ReturnsFalse()
+    public async Task IsPreviouslyUsed_NoMatch_ReturnsFalse()
     {
         var hasher = new Argon2idPasswordHasher();
         var hash = hasher.Hash("DifferentP@ss1");
         var validator = BuildValidator();
-        validator.IsPreviouslyUsed("Password1!", [hash]).Should().BeFalse();
+        (await validator.IsPreviouslyUsedAsync("Password1!", [hash])).Should().BeFalse();
     }
 
     [Fact]
-    public void IsPreviouslyUsed_EmptyHistory_ReturnsFalse()
+    public async Task IsPreviouslyUsed_EmptyHistory_ReturnsFalse()
     {
         var validator = BuildValidator();
-        validator.IsPreviouslyUsed("Password1!", []).Should().BeFalse();
+        (await validator.IsPreviouslyUsedAsync("Password1!", [])).Should().BeFalse();
     }
 }

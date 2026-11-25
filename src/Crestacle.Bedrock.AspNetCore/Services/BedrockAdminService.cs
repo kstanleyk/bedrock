@@ -134,13 +134,14 @@ internal sealed partial class BedrockAdminService : IBedrockAdminService
         var credential = await _credentialRepo.GetByUserIdAsync(userId, ct)
             ?? throw new BedrockNotFoundException($"User {userId} not found.");
 
-        if (!_validator.IsValid(newPassword, out var errors))
+        var (passwordValid, errors) = await _validator.IsValidAsync(newPassword, ct);
+        if (!passwordValid)
             throw new BedrockValidationException(errors);
 
         if (_options.Password.HistoryDepth > 0)
         {
             var history = await _historyRepo.GetRecentByUserAsync(userId, _options.Password.HistoryDepth, ct);
-            if (_validator.IsPreviouslyUsed(newPassword, history.Select(h => h.PasswordHash)))
+            if (await _validator.IsPreviouslyUsedAsync(newPassword, history.Select(h => h.PasswordHash), ct))
                 throw new BedrockValidationException("Password has been used recently and cannot be reused.");
         }
 

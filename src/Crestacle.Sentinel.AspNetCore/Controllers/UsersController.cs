@@ -147,4 +147,7 @@ public sealed class UsersController(
     }
 }
 
+// RoleId (bare Guid) and ExpiresOn (nullable DateTime) have no meaningful DataAnnotations
+// constraint to add -- same bare-Guid convention as VerifyStepUpRequest.ChallengeId elsewhere in
+// this change-set. RoleId == Guid.Empty is already explicitly guarded in AssignRoleAsync above.
 public sealed record AssignRoleRequest(Guid RoleId, DateTime? ExpiresOn = null);

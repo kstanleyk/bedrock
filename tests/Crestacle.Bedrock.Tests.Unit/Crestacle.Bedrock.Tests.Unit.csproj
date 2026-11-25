@@ -7,6 +7,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.Core\Crestacle.Bedrock.Core.csproj" />
+    <ProjectReference Include="..\..\src\Crestacle.Bedrock.EntityFramework\Crestacle.Bedrock.EntityFramework.csproj" />
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.AspNetCore\Crestacle.Bedrock.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.HaveIBeenPwned\Crestacle.Bedrock.HaveIBeenPwned.csproj" />
     <ProjectReference Include="..\..\src\Crestacle.Bedrock.HardwareTokenSeedImport\Crestacle.Bedrock.HardwareTokenSeedImport.csproj" />

@@ -25,6 +25,13 @@ public sealed class AuditEntry : Entity<Guid>
 
     public DateTime CreatedOn          { get; private set; }
 
+    /// <summary>
+    /// Tenant the change was made in. Null in single-tenant deployments (see ITenantContext's
+    /// own doc comment) — a null value means this row is excluded from no tenant's filtered view,
+    /// mirroring every other Sentinel entity's TenantId convention (e.g. UserRole.TenantId).
+    /// </summary>
+    public string? TenantId            { get; private set; }
+
     private AuditEntry() { }
 
     public static AuditEntry Create(
@@ -32,7 +39,8 @@ public sealed class AuditEntry : Entity<Guid>
         string      entityId,
         string?     actorIdentityId,
         string?     actorIp,
-        string?     actorUserAgent)
+        string?     actorUserAgent,
+        string?     tenantId = null)
         => new()
         {
             Id              = Guid.NewGuid(),
@@ -42,5 +50,6 @@ public sealed class AuditEntry : Entity<Guid>
             ActorIp         = actorIp,
             ActorUserAgent  = actorUserAgent,
             CreatedOn       = DateTime.UtcNow,
+            TenantId        = tenantId,
         };
 }

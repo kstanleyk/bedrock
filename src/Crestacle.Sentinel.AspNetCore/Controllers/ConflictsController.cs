@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Crestacle.Sentinel.AspNetCore.Authorization;
 using Crestacle.Sentinel.Core.Authorization;
 using Crestacle.Sentinel.Core.DTOs;
@@ -58,4 +59,7 @@ public sealed class ConflictsController(IPermissionConflictRepository conflictRe
     }
 }
 
-public sealed record AddConflictRequest(string PermissionIdA, string PermissionIdB);
+// Matches Permission.Id's HasMaxLength(150) (PermissionConfiguration.cs).
+public sealed record AddConflictRequest(
+    [Required, StringLength(150)] string PermissionIdA,
+    [Required, StringLength(150)] string PermissionIdB);

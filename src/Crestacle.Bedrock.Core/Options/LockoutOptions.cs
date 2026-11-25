@@ -10,4 +10,11 @@ public sealed class LockoutOptions
 
     /// <summary>Duration of the lockout window. Default: 15 minutes.</summary>
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// Maximum wrong-code attempts allowed against a single step-up challenge before it is
+    /// invalidated outright (see <c>StepUpAttemptLimiter</c>/<c>StepUpService.VerifyAsync</c>).
+    /// Default: 5.
+    /// </summary>
+    public int MaxStepUpVerifyAttempts { get; set; } = 5;
 }

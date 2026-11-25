@@ -155,7 +155,8 @@ internal sealed class UserRepository(
             $"{userId}/{roleId}",
             actor.IdentityId,
             actor.IpAddress,
-            actor.UserAgent));
+            actor.UserAgent,
+            tenantId));
 
         await context.SaveChangesAsync(ct);
 
@@ -195,7 +196,8 @@ internal sealed class UserRepository(
             $"{userId}/{roleId}",
             actor.IdentityId,
             actor.IpAddress,
-            actor.UserAgent));
+            actor.UserAgent,
+            tenantId));
 
         await context.SaveChangesAsync(ct);
 

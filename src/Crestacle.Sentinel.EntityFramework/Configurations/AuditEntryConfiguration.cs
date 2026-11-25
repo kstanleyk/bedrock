@@ -36,10 +36,16 @@ internal sealed class AuditEntryConfiguration : IEntityTypeConfiguration<AuditEn
         builder.Property(a => a.CreatedOn)
                .IsRequired();
 
+        // Null means single-tenant / unfiltered, per ITenantContext's own doc comment — the same
+        // convention as every other Sentinel entity's TenantId (e.g. UserRole.TenantId).
+        builder.Property(a => a.TenantId)
+               .HasMaxLength(100);
+
         // Append-only: no updates, no deletes via EF.
         // Enforce at the DB level with a trigger or restrictive role — at the EF level we
         // simply never expose a mutating method on the table.
         builder.HasIndex(a => a.ActorIdentityId);
         builder.HasIndex(a => a.CreatedOn);
+        builder.HasIndex(a => a.TenantId);
     }
 }

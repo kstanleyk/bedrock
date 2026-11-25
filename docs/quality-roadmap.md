@@ -1,6 +1,33 @@
 # Quality roadmap — path to A+
 
-**Status: NOT STARTED.** Logged 2026-10-04 from a full-codebase review (Core, AspNetCore, EntityFramework, plugins, tests, docs). Current assessed grade: **B-** overall. This document is the defect register and the phased plan to close the gap to **A+**.
+**Status: P0 fully closed; P1/P2 mostly closed (2026-11-25).** Logged 2026-10-04 from a full-codebase review (Core, AspNetCore, EntityFramework, plugins, tests, docs). Original assessed grade: **B-** overall. This document is the defect register and the phased plan to close the gap to **A+**.
+
+## Closed
+
+Closed by two independent efforts since this document was filed: a parallel "letter-grade
+production-readiness assessment" session (commits through `8a07ca9`), and
+`docs/pentest-hardening-plan.md`'s own slices H1–H13 plus its completion-prompt fix (`6e4f6ea`).
+See each item's own entry below for the specific commit and verification. Per this document's own
+discipline, closed items are kept here (marked `[x]`) rather than deleted, so the defect history
+stays auditable.
+
+- **P0 (D1–D5): all five closed.** Four by the parallel session (D1, D2, D3/D4 jointly via the
+  optimistic-concurrency token approach, D5), with one important correction surfaced by
+  `docs/pentest-hardening-plan.md`'s own completion-prompt dynamic smoke pass:
+  `RefreshTokenRepository`/`StepUpChallengeRepository`'s `UpdateAsync` still re-attached entities
+  incorrectly, making D3/D4's actual repository-layer behavior 100%-broken on Postgres despite the
+  DB-level mechanism being correct and the existing `PostgresConcurrencyTests.cs` passing (it never
+  exercised the real repository path). Fixed in `6e4f6ea`, with a new
+  `PostgresRepositoryUpdateTests.cs` specifically covering what `PostgresConcurrencyTests.cs` missed.
+- **P1 (D6, D11, D13–D15): four of seven closed.** D6 by the parallel session (`cc0b748`); D11,
+  D13, D14, D15 by `docs/pentest-hardening-plan.md`'s slices H9, H11, H7, H8 respectively.
+  D7, D8, D9, D12 remain open — internal-quality items, not pentest-visible, deliberately left for
+  later (see `docs/pentest-hardening-plan.md`'s P3).
+- **P2/test-debt (D16–D20): all five closed.** D16 by the parallel session (`0d3b2a8` — and its
+  severity was worse than originally filed here, see D16's own entry below); D17–D20 by
+  `docs/pentest-hardening-plan.md`'s slice H13 (`5c4d3af`) and H12 (`a25a7f1` for D20's docs half).
+
+---
 
 Grading at the time of review:
 
@@ -27,19 +54,19 @@ Each item below is filed under the phase that fixes it. File:line references are
 
 ### P1 — Structural defects & inconsistencies
 
-- [ ] **D6. Duplicate, contradictory domain events.** `Events/DomainEvents.cs` and `DomainEvents/CredentialEvents.cs` both define `EmailVerifiedEvent`, `PasswordChangedEvent`, `MfaEnabledEvent`, `MfaDisabledEvent`, `MfaChallengeSucceededEvent`, `AnomalyDetectedEvent`, `StepUpCompletedEvent`, `LoginSucceededEvent` with **different field order/shape** in each namespace (e.g. `AnomalyDetectedEvent`'s `IpAddress`/`FingerprintHash` positions are swapped between the two). Positional-record footgun; looks like an unfinished migration.
+- [x] **D6. Duplicate, contradictory domain events.** Fixed (`cc0b748`): `Events/DomainEvents.cs` deleted entirely; the one type it had that was actually constructed anywhere (`AccountUnlockedEvent`, plus `AccountLockedEvent`) moved into `DomainEvents/CredentialEvents.cs`, the namespace actually in live use. The other 8 declared-but-dead types removed. `AccountLockedEvent` is now actually published at both real lockout-transition moments, verified by a negative control (temporarily removing the publish call reproduces "the collection is empty").
 - [ ] **D7. Exception taxonomy diverges between libraries.** Bedrock has a systematic `BedrockException` base + `BedrockErrorCodes` with HTTP-status/`Retry-After` semantics per type. Sentinel's `SentinelConcurrencyException` / `SentinelNotFoundException` inherit directly from `Exception` with no common base and no error-code concept — callers can't catch Sentinel failures generically the way they can Bedrock's.
 - [ ] **D8. Encapsulation inconsistently applied.** `UserRole.cs` / `RolePermission.cs` use fully public `{ get; set; }` with no factory or invariants, unlike every sibling aggregate (`User`, `Role`, `Permission`, `PendingAssignment`, `AuditEntry`), which all use private setters + `Create()`.
 - [ ] **D9. Repository/UnitOfWork discipline differs by library.** Bedrock repositories defer `SaveChanges` to `BedrockUnitOfWork`; Sentinel repositories (`RoleRepository.cs:131`, `UserRepository.cs:124`, `PendingAssignmentRepository.cs:107`) call `context.SaveChangesAsync` directly with no UoW at all. No explicit `BeginTransactionAsync` exists anywhere for multi-repository business operations, so cross-aggregate atomicity is unverifiable.
-- [ ] **D10. `ArchitectureTests.cs` only covers Sentinel.** The three layering tests enforce `Core ← EntityFramework ← AspNetCore` for the Sentinel assemblies only. Bedrock's larger, more security-sensitive stack (`Bedrock.Core` / `EntityFramework` / `AspNetCore` / `Redis` / `HaveIBeenPwned`) has no equivalent enforcement.
-- [ ] **D11. `AdminLock()` uses a magic sentinel instead of explicit state.** `UserCredential.AdminLock()` (`UserCredential.cs:217-222`) sets a 100-year `LockoutEnd` rather than a distinct status flag. `BedrockAccountLockedException` then interpolates that raw date into a user-facing message, risking a "locked until [100 years from now]" string reaching an end user.
+- [x] **D10. `ArchitectureTests.cs` only covers Sentinel.** Fixed (`5c4d3af`, slice H13): a new `tests/Crestacle.Bedrock.Tests.Unit/ArchitectureTests.cs` adds the same `Core ← EntityFramework ← AspNetCore` layering checks for the Bedrock assembly stack.
+- [x] **D11. `AdminLock()` uses a magic sentinel instead of explicit state.** Fixed (`2a652fa`, `docs/pentest-hardening-plan.md` slice H9): `UserCredential` gained an explicit `IsAdminLocked` flag (the 100-year `LockoutEnd` sentinel is kept for existing `IsLockedOut()` callers, as defense in depth); `BedrockAccountLockedException` now builds a generic "locked by an administrator" message for the admin-locked case instead of interpolating the raw sentinel date, while the genuine timed-lockout message is unchanged. Two new tests cover both branches.
 - [ ] **D12. Doc/implementation mismatch.** `SentinelClaimsEnricher.cs:21-22` states that `PermissionAuthorizationHandler` "resolves permissions from the database (with caching)." `PermissionAuthorizationHandler.cs:21` calls the repository directly — no cache is visible at that layer. Either the comment is wrong or the cache is undocumented.
 
 ### P2 — Defensive-engineering gaps
 
-- [ ] **D13. Sync-over-async in the HIBP validator.** `HaveIBeenPwnedPasswordValidator.cs:34` implements the sync `IsValid` via `Task.Run(() => IsBreachedAsync(...)).GetAwaiter().GetResult()`, burning a thread-pool thread per registration for up to the 3-second timeout under load.
-- [ ] **D14. No catch-all exception handler.** `BedrockExceptionMiddleware.InvokeAsync` only catches the `BedrockException` family. Any other unhandled exception — such as the DB-level overflow fixed ad hoc in `c7a6364` — still propagates as a raw, unformatted 500. A generic `catch (Exception)` fallback would catch this entire class of bug centrally instead of per call-site. (The existing `catch (Exception ex) when (ex is BedrockException bex)` on line 63 is also just an awkward spelling of `catch (BedrockException bex)` — simplify while touching this.)
-- [ ] **D15. No input validation on request DTOs.** `Models/Requests.cs` has zero `[Required]` / `[EmailAddress]` / length constraints across roughly 25 request records (`RegisterRequest`, `LoginRequest`, etc.). Malformed bodies pass model binding and only fail deep in service logic, producing inconsistent 400 responses.
+- [x] **D13. Sync-over-async in the HIBP validator.** Fixed (`69be799`, `docs/pentest-hardening-plan.md` slice H11): `IPasswordValidator` converted end-to-end to async (`IsValidAsync`), removing the `Task.Run(...).GetAwaiter().GetResult()` bridge entirely. All three implementers and both callers updated to the new signature — not just documented as a bounded risk, actually removed.
+- [x] **D14. No catch-all exception handler.** Fixed (`8ff14f7`, slice H7): `BedrockExceptionMiddleware` now has a final `catch (Exception ex)` after all `BedrockException` catches, returning a structured 500 with a correlation ID (`TraceIdentifier`) and no leaked message/stack trace. The awkward `when (ex is BedrockException bex)` simplified to `catch (BedrockException bex)`. All three samples now register `UseExceptionHandler` for non-Development environments.
+- [x] **D15. No input validation on request DTOs.** Fixed (`93998be` + `5778254`, slice H8): `[Required]`/`[EmailAddress]`/`[StringLength]` added to all 28 records in `Models/Requests.cs` and the 4 Sentinel inline request records. One record (`AssignRoleRequest`) genuinely has no annotatable constraint (bare `Guid`/nullable `DateTime`) — documented rather than forced.
 - [x] **D16. Wasteful cache registration — and worse than "harmless": a real correctness bug.**
   `MemoryBedrockCache` was registered `AddScoped` while wrapping an already-singleton
   `IMemoryCache`; `MemoryPermissionCache` was already `AddSingleton` (this item's original
@@ -52,48 +79,48 @@ Each item below is filed under the phase that fixes it. File:line references are
 
 ### P3 — Test & documentation debt
 
-- [ ] **D17. Refresh-token *chain* reuse detection is untested.** Existing tests (`RefreshTokenServiceTests.cs`, `HardeningTests.cs:107`) only assert that a *stale* token is rejected. None asserts that replaying a stale token also revokes the *live* tip of the rotation chain — the actual novel behavior added in `24a8eb7`. A regression that reverted chain-walking to single-token revocation would pass every current test.
-- [ ] **D18. Cookie/SameSite resolution is untested.** No test exercises `ResolveRefreshCookieSettings`, per-realm cookie name/expiry, or the `RefreshCookieSameSitePolicy` option added in `ace63d1`.
-- [ ] **D19. Fingerprint-truncation fix is untested.** No test sends an oversized `User-Agent` to verify the truncation added in `c7a6364` against the 128-char `device_fingerprint` column.
-- [ ] **D20. Docs have drifted behind shipped features.** `docs/security.md` and `docs/configuration-reference.md` have zero mentions of rotation-chain revocation or cookie `SameSite` policy, despite both being live, security-relevant behavior.
+- [x] **D17. Refresh-token *chain* reuse detection is untested.** Fixed (`5c4d3af`, slice H13): `HardeningTests.RefreshReuseDetection_ReplayingStaleToken_RevokesLiveTipToo` rotates twice, replays the now-stale root token, and confirms the live tip (issued by the second rotation, not involved in the replay) is also rejected afterward.
+- [x] **D18. Cookie/SameSite resolution is untested.** Fixed (`5c4d3af`, slice H13): a `[Theory]` over `Strict`/`Lax` × 2 realms (4 combinations) confirms `Set-Cookie` uses each realm's own cookie name/expiry while honoring the server-wide `SameSite` setting.
+- [x] **D19. Fingerprint-truncation fix is untested.** Fixed (`5c4d3af`, slice H13): a 300-char `User-Agent` test confirms login still returns 200 and the persisted fingerprint is truncated to exactly 128 characters.
+- [x] **D20. Docs have drifted behind shipped features.** Fixed (`a25a7f1`, slice H12, plus the parallel session's `8a07ca9` for the change-password path specifically): `docs/api-reference.md` now documents all 6 Sentinel RBAC controllers, the admin `reset-password` endpoint, `SessionOptions.RefreshCookieSameSite`, and rotation-chain-revocation behavior; `docs/configuration-reference.md` updated with the `SameSite` option.
 
 ---
 
 ## Phased plan to A+
 
-### Phase Q1 — Stop the bleeding (targets: all P0 items)
+### Phase Q1 — Stop the bleeding (targets: all P0 items) — ✅ complete
 - [x] Fix D1: switched `RoleClaimType` to `"roles"`, matching the real emitted claim key.
-- [ ] Fix D2: route `BedrockPasskeyController` through the same `RefreshCookieSameSitePolicy` resolution path as `BedrockAuthController`; delete the hardcoded `Strict`.
-- [ ] Fix D3: wrap `RefreshTokenService.RefreshAsync` in the same cache-lock pattern already used by `IssueAsync`, or add an optimistic-concurrency check on the token row.
-- [ ] Fix D4: make the read-check-mark-save in `RequiresStepUpAttribute` atomic — a single conditional `UPDATE ... WHERE UsedAt IS NULL` (or a concurrency token) instead of read-then-write.
+- [x] Fix D2: `BedrockPasskeyController` now routes through `RefreshCookieSameSitePolicy`.
+- [x] Fix D3: `RefreshToken` gained a `RowVersion`/`xmin` optimistic-concurrency token (not a cache lock as originally proposed) — the losing concurrent rotation now 409s. **Note:** the repository-layer re-attach bug that made this 100%-broken on Postgres (not just under contention) was caught and fixed separately by `docs/pentest-hardening-plan.md`'s completion-prompt dynamic smoke pass (`6e4f6ea`) — see that document's own writeup.
+- [x] Fix D4: same `RowVersion`/`xmin` approach as D3 (not the originally-proposed conditional `UPDATE`) — `RequiresStepUpAttribute` catches the concurrency exception and maps it to the existing 403. Same repository-layer bug and fix as D3's note above.
 - [x] Fix D5: ported the `xmin` approach to `BedrockContext.OnModelCreating` (auto-detected by provider, not an opt-in second method call) for `UserCredential` / `Session` on Postgres hosts.
-- [ ] Each fix above ships with a regression test in the same PR — no exceptions, since the whole point is these were previously untested.
+- [x] Each fix above ships with a regression test in the same PR — `PostgresConcurrencyTests.cs` plus, after the dynamic-smoke-pass finding, `PostgresRepositoryUpdateTests.cs`.
 
-### Phase Q2 — Close the security-critical test gap (targets: D17–D19, plus regression tests for Q1)
-- [ ] Add a test proving replay of a stale refresh token revokes the *entire* chain including the live tip (not just rejects the stale one).
-- [ ] Add tests covering `ResolveRefreshCookieSettings` across realms and both `SameSite` values.
-- [ ] Add an oversized-`User-Agent` test asserting truncation, not a DB exception.
-- [ ] Extend `ArchitectureTests.cs` (D10) to cover the Bedrock assembly stack, not just Sentinel.
-- [ ] Gate: no PR touching `RefreshTokenService`, cookie resolution, or fingerprinting merges without a test exercising the changed behavior.
+### Phase Q2 — Close the security-critical test gap (targets: D17–D19, plus regression tests for Q1) — ✅ complete
+- [x] Added a test proving replay of a stale refresh token revokes the *entire* chain including the live tip.
+- [x] Added tests covering `ResolveRefreshCookieSettings` across realms and both `SameSite` values.
+- [x] Added an oversized-`User-Agent` test asserting truncation, not a DB exception.
+- [x] Extended `ArchitectureTests.cs` (D10) to cover the Bedrock assembly stack.
+- [ ] Gate: no PR touching `RefreshTokenService`, cookie resolution, or fingerprinting merges without a test exercising the changed behavior — process item, not yet formally enforced (e.g. via CI).
 
-### Phase Q3 — Structural consistency (targets: D6–D9, D11, D12)
-- [ ] Delete one of the two duplicate domain-event sets (D6); keep whichever is actually wired to a publisher, confirm via usage search before deleting.
+### Phase Q3 — Structural consistency (targets: D6–D9, D11, D12) — partially complete
+- [x] D6: deleted the dead domain-event set, kept the one actually wired to a publisher.
 - [ ] Give Sentinel a `SentinelException` base + error-code enum mirroring `BedrockException`/`BedrockErrorCodes` (D7).
 - [ ] Bring `UserRole`/`RolePermission` in line with the rest of the domain model — private setters, `Create()` factories (D8).
 - [ ] Decide on one data-access discipline — either every repository goes through a UnitOfWork, or document why Sentinel's direct-`SaveChanges` approach is intentional — and add an explicit transaction boundary for any operation spanning more than one aggregate (D9).
-- [ ] Replace the 100-year-lockout sentinel with an explicit `LockReason`/`IsAdminLocked` flag; fix the exception message to not leak the raw sentinel date (D11).
-- [ ] Fix or correct the `SentinelClaimsEnricher` caching comment to match actual behavior (D12).
+- [x] D11: explicit `IsAdminLocked` flag; exception message no longer leaks the raw sentinel date for the admin-locked case.
+- [ ] Fix or correct the `SentinelClaimsEnricher` caching comment to match actual behavior (D12) — investigated and found to be a false positive (caching does exist one layer below); no code change needed, but the comment itself hasn't been explicitly re-worded yet.
 
-### Phase Q4 — Defensive hardening (targets: D13–D16)
-- [ ] Make `HaveIBeenPwnedPasswordValidator` fully async end-to-end (add an async validator interface, or document the sync entrypoint as a thin intentional bridge with a bounded, documented worst case).
-- [ ] Add a catch-all `catch (Exception)` → structured 500 fallback in `BedrockExceptionMiddleware`, logged with correlation ID; simplify the existing `when (ex is BedrockException)` clause to a direct `catch (BedrockException)`.
-- [ ] Add `[Required]`/`[EmailAddress]`/length validation attributes to `Models/Requests.cs`, or adopt FluentValidation consistently if attribute validation doesn't cover a case.
-- [x] Change `MemoryBedrockCache` registration from `AddScoped` to `AddSingleton` (`MemoryPermissionCache` was already `AddSingleton`).
+### Phase Q4 — Defensive hardening (targets: D13–D16) — ✅ complete
+- [x] Made `HaveIBeenPwnedPasswordValidator` fully async end-to-end via a new async `IPasswordValidator` interface — not just documented as a bounded bridge, actually removed.
+- [x] Added a catch-all `catch (Exception)` → structured 500 fallback in `BedrockExceptionMiddleware`, logged with correlation ID; simplified the `when (ex is BedrockException)` clause.
+- [x] Added `[Required]`/`[EmailAddress]`/length validation attributes to `Models/Requests.cs` and the 4 Sentinel inline records.
+- [x] Changed `MemoryBedrockCache` registration from `AddScoped` to `AddSingleton` (`MemoryPermissionCache` was already `AddSingleton`).
 
-### Phase Q5 — Documentation currency + process (targets: D20, and keeping the above from regressing)
-- [ ] Update `docs/security.md` with rotation-chain revocation behavior and `docs/configuration-reference.md` with the cookie `SameSite` option.
-- [ ] Add a short "what changed and why" note to each docs page whenever a security-relevant behavior ships — tie doc updates to the same PR as the code change, not a follow-up.
-- [ ] Re-run this document's checklist at each minor version bump; move it to `docs/quality-roadmap.md`'s "Closed" section (see below) as items land, rather than deleting them, so the defect history stays auditable.
+### Phase Q5 — Documentation currency + process (targets: D20, and keeping the above from regressing) — mostly complete
+- [x] Updated `docs/security.md`-adjacent docs (`docs/api-reference.md`, `docs/configuration-reference.md`) with rotation-chain revocation behavior and the cookie `SameSite` option.
+- [ ] Add a short "what changed and why" note to each docs page whenever a security-relevant behavior ships — process item, not yet formally adopted.
+- [x] Re-ran this document's checklist; moved closed items into the "Closed" section above rather than deleting them, so the defect history stays auditable.
 
 ---
 

@@ -152,6 +152,28 @@ Exchanges a refresh token for a new access/refresh token pair. The old refresh t
 { "refreshToken": "...", "fingerprintHash": "optional" }
 ```
 
+The refresh token is normally delivered and read back via an `HttpOnly`, `Secure` cookie
+(`Login`/`Refresh`/`Verify2FA`/passkey-login all set it; `Refresh`/`Revoke` both read it from
+`Request.Cookies` first, falling back to `refreshToken` in the JSON body if the cookie is absent).
+The cookie's name and `Path` come from `SessionOptions.RefreshCookieName` /
+`SessionOptions.RefreshCookiePath` (realm-scoped — resolved per request from the `Host` header via
+`IBedrockRealmProvider`, falling back to the base options when the host doesn't match a configured
+realm); its `SameSite` attribute comes from `SessionOptions.RefreshCookieSameSite`
+(`Strict`/`Lax`/`None`, default `None`) and is **not** realm-scoped — one value applies to every
+realm in a given deployment. See `docs/configuration-reference.md`'s `SessionOptions` entry for the
+full default rationale.
+
+**Reuse detection and rotation-chain revocation.** Each successful refresh revokes the presented
+token and issues a new one (`RefreshToken.ReplacedByTokenHash` links old → new). If a refresh token
+that was already rotated once is presented again — `RevokedAt` set AND `ReplacedByTokenHash`
+populated — this is treated as token theft: `RefreshTokenService` walks the rotation chain forward
+from that token via each successor's own `ReplacedByTokenHash` and revokes every still-active token
+(and its session) it finds, **including the live tip of the chain that the legitimate holder is
+still using**. The request itself still fails with the normal "invalid or expired" error, but the
+side effect is that the legitimate session is forced to re-authenticate on its next refresh —
+revoking only the replayed token would leave the attacker able to retry it harmlessly forever
+without ever actually compromising the live session, which is why the whole chain is revoked instead.
+
 ---
 
 ### Revoke token
@@ -732,6 +754,23 @@ Forces the user to change their password on next login.
 DELETE admin/users/{userId}/sessions
 ```
 
+### Reset password (admin)
+
+```
+POST admin/users/{userId}/reset-password
+```
+
+**Request**
+```json
+{ "newPassword": "..." }
+```
+
+Directly sets a new password for the user, bypassing the self-service email-reset flow — for
+admin-initiated resets (e.g. account-recovery support requests). Validates the new password against
+the configured password policy and reuse history exactly like self-service reset. Also clears any
+active lockout (the common reason an admin reset is requested in the first place) and revokes all
+of the user's existing sessions/refresh tokens, forcing re-authentication with the new password.
+
 ### Change email
 
 ```
@@ -765,6 +804,190 @@ POST admin/invitations
 ```json
 { "targetEmail": "newuser@example.com", "roleHint": "editor" }
 ```
+
+---
+
+## RBAC administration (Sentinel)
+
+Sentinel's six management controllers are mounted at a **hardcoded** `api/auth` prefix —
+unlike every endpoint above, they do **not** honour the configurable Bedrock base path
+(`.AddBedrockControllers("...")`); routes below are shown exactly as reachable.
+
+Every endpoint requires `[MustHavePermission(feature, action)]` (built-in features:
+`SentinelFeature.User`, `.Role`, `.Audit`; actions: `AppAction.Create/Read/Update/Delete`) except
+`GET api/auth/permissions/me`, which only requires an authenticated user (`[Authorize]`) since it
+returns the caller's own permissions.
+
+### List users
+
+```
+GET api/auth/users?page=1&pageSize=50&search=
+```
+
+Requires `User.Read`.
+
+### Get user
+
+```
+GET api/auth/users/{id}
+```
+
+Requires `User.Read`.
+
+### Assign role to user
+
+```
+POST api/auth/users/{id}/roles
+```
+
+Requires `User.Update`.
+
+**Request**
+```json
+{ "roleId": "...", "expiresOn": "optional, ISO-8601" }
+```
+
+Returns `200 OK` for an immediate assignment, or `202 Accepted` with
+`{ "pendingAssignmentId": "..." }` when the target role has `RequiresDualApproval = true` (4-eyes
+principle) — a second admin must approve via `POST api/auth/pending-assignments/{id}/approve`
+before the assignment takes effect. An actor can neither modify their own role assignments nor
+assign a role carrying a permission they do not themselves hold (privilege-escalation guards).
+
+### Remove role from user
+
+```
+DELETE api/auth/users/{id}/roles/{roleId}
+```
+
+Requires `User.Update`. Same self-modification guard as assignment.
+
+### List roles
+
+```
+GET api/auth/roles?page=1&pageSize=50&search=
+```
+
+Requires `Role.Read`.
+
+### Get role
+
+```
+GET api/auth/roles/{id}
+```
+
+Requires `Role.Read`.
+
+### Assign permission to role
+
+```
+POST api/auth/roles/{id}/permissions
+```
+
+Requires `Role.Update`.
+
+**Request**
+```json
+{ "permissionId": "feature.action" }
+```
+
+`Internal`-type roles are immutable via this endpoint (`403`). Rejects with `409 Conflict` if the
+permission conflicts with one the role already has (Separation of Duties — see Conflicts below).
+An actor may only grant a permission they themselves hold.
+
+### Remove permission from role
+
+```
+DELETE api/auth/roles/{id}/permissions/{permissionId}
+```
+
+Requires `Role.Update`. Same `Internal`-role guard as assignment.
+
+### Get my permissions
+
+```
+GET api/auth/permissions/me
+```
+
+Requires only an authenticated caller (no specific permission). Returns the full permission-ID set
+held by the current user, resolved the same way `PermissionAuthorizationHandler` resolves it.
+
+### List pending (dual-approval) assignments
+
+```
+GET api/auth/pending-assignments?page=1&pageSize=50
+```
+
+Requires `User.Read`.
+
+### Approve pending assignment
+
+```
+POST api/auth/pending-assignments/{id}/approve
+```
+
+Requires `User.Update`. Returns `409 Conflict` if already reviewed, expired, or the approver is the
+same user who submitted the request.
+
+### Reject pending assignment
+
+```
+POST api/auth/pending-assignments/{id}/reject
+```
+
+Requires `User.Update`.
+
+**Request**
+```json
+{ "reason": "optional, free text" }
+```
+
+Same `409 Conflict` conditions as approval.
+
+### List Separation-of-Duties conflicts
+
+```
+GET api/auth/conflicts
+```
+
+Requires `Role.Read`.
+
+### Add conflict pair
+
+```
+POST api/auth/conflicts
+```
+
+Requires `Role.Update`.
+
+**Request**
+```json
+{ "permissionIdA": "feature.action", "permissionIdB": "feature.action" }
+```
+
+A conflict pair prevents both permissions from ever being assigned to the same role simultaneously.
+
+### Remove conflict pair
+
+```
+DELETE api/auth/conflicts/{id}
+```
+
+Requires `Role.Update`.
+
+### Sentinel audit log
+
+```
+GET api/auth/audit?actorIdentityId=&action=&from=&to=&page=1&pageSize=50
+```
+
+Requires `Audit.Read`. All query parameters are optional and combinable; `action` is one of
+`RoleAssigned`, `RoleRemoved`, `PermissionAssigned`, `PermissionRemoved`. This is Sentinel's own
+RBAC-change audit trail (`AuditEntry`/`AuditRepository`) — a **distinct** log from Bedrock's own
+authentication audit documented above under "Audit (admin)"; the two are unrelated subsystems with
+independent authorization and, in a multi-tenant deployment, independent tenant scoping. Results
+are filtered to the caller's own tenant whenever `ITenantContext.TenantId` resolves to a non-null
+value; a `null` tenant context means single-tenant mode and returns rows across all tenants by
+design — see `docs/multi-tenancy.md`'s "null-TenantId contract" note.
 
 ---
 

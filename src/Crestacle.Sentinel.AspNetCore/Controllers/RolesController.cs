@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Crestacle.Sentinel.AspNetCore.Authorization;
 using Crestacle.Sentinel.Core.Authorization;
 using Crestacle.Sentinel.Core.DTOs;
@@ -147,4 +148,7 @@ public sealed class RolesController(
     }
 }
 
-public sealed record AssignPermissionRequest(string PermissionId);
+// Permission.Id is a composite "feature.action"-style key stored with HasMaxLength(150)
+// (PermissionConfiguration.cs) — mirrored here.
+public sealed record AssignPermissionRequest(
+    [Required, StringLength(150)] string PermissionId);

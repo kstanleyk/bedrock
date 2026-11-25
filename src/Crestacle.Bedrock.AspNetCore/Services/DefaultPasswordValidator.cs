@@ -21,7 +21,7 @@ public sealed class DefaultPasswordValidator : IPasswordValidator
         _commonValidator = commonValidator;
     }
 
-    public bool IsValid(string password, out IReadOnlyList<string> errors)
+    public async Task<(bool IsValid, IReadOnlyList<string> Errors)> IsValidAsync(string password, CancellationToken ct = default)
     {
         var list = new List<string>();
 
@@ -36,18 +36,18 @@ public sealed class DefaultPasswordValidator : IPasswordValidator
         if (_opts.RequireSpecialCharacter && !password.Any(c => !char.IsLetterOrDigit(c)))
             list.Add("Password must contain at least one special character.");
 
-        if (!_commonValidator.IsValid(password, out var commonErrors))
+        var (commonValid, commonErrors) = await _commonValidator.IsValidAsync(password, ct).ConfigureAwait(false);
+        if (!commonValid)
             list.AddRange(commonErrors);
 
-        errors = list;
-        return list.Count == 0;
+        return (list.Count == 0, list);
     }
 
-    public bool IsPreviouslyUsed(string password, IEnumerable<string> hashes)
+    public Task<bool> IsPreviouslyUsedAsync(string password, IEnumerable<string> hashes, CancellationToken ct = default)
     {
         foreach (var hash in hashes)
             if (_hasher.Verify(password, hash))
-                return true;
-        return false;
+                return Task.FromResult(true);
+        return Task.FromResult(false);
     }
 }

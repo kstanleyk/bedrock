@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Crestacle.Sentinel.EntityFramework.Repositories;
 
-internal sealed class AuditRepository(IAuthDbContext context) : IAuditRepository
+internal sealed class AuditRepository(IAuthDbContext context, ITenantContext tenantContext) : IAuditRepository
 {
     public async Task<PagedResult<AuditEntryDto>> GetAsync(
         string?      actorIdentityId = null,
@@ -16,12 +16,15 @@ internal sealed class AuditRepository(IAuthDbContext context) : IAuditRepository
         int          pageSize        = 50,
         CancellationToken ct         = default)
     {
+        var tenantId = tenantContext.TenantId;
+
         var query = context.AuditLog
             .AsNoTracking()
-            .Where(a => actorIdentityId == null || a.ActorIdentityId == actorIdentityId)
-            .Where(a => action          == null || a.Action          == action)
-            .Where(a => from            == null || a.CreatedOn       >= from)
-            .Where(a => to              == null || a.CreatedOn       <= to)
+            .Where(a => tenantId         == null || a.TenantId        == tenantId)
+            .Where(a => actorIdentityId  == null || a.ActorIdentityId == actorIdentityId)
+            .Where(a => action           == null || a.Action          == action)
+            .Where(a => from             == null || a.CreatedOn       >= from)
+            .Where(a => to               == null || a.CreatedOn       <= to)
             .OrderByDescending(a => a.CreatedOn);
 
         var total = await query.CountAsync(ct);
