@@ -150,6 +150,59 @@ along with a `name` and an `mfa_enabled` claim:
 }
 ```
 
+**Token size:** every permission adds ~40–60 bytes. Apps with large permission sets have hit
+reverse-proxy default header-buffer limits this way in production — see "Embedding only profile
+claims" below for the lighter alternative.
+
+---
+
+## Embedding only profile claims (no permissions)
+
+If your app needs the caller's name, MFA status, and role on every token, but does not want one
+claim per granted permission inflating token size, call `.WithProfileClaims()` instead of
+`.WithPermissionClaims()`:
+
+```csharp
+builder.Services
+    .AddBedrockWithSentinel<AppDbContext, AppDbContext>(bedrock => { ... })
+    .WithProfileClaims()   // name + mfa_enabled + role claims, no Permission.* claims
+    .AddBedrockControllers();
+```
+
+This registers `SentinelProfileClaimsEnricher` instead of `SentinelClaimsEnricher` as the
+`IBedrockClaimsEnricher`. The resulting token carries exactly:
+
+```json
+{
+  "sub": "...",
+  "name": "Jane Doe",
+  "mfa_enabled": "true"
+}
+```
+
+— plus role claims from `GetRolesAsync`, same as `.WithPermissionClaims()`. `[MustHavePermission]`
+still works either way: it resolves permissions from the database (cached), never from claims.
+
+`.WithPermissionClaims()` and `.WithProfileClaims()` are mutually exclusive — both replace the
+single registered `IBedrockClaimsEnricher`, so whichever is called last wins. Calling neither
+leaves the default `NullBedrockClaimsEnricher` in place: no `name`, `mfa_enabled`, or role claims
+at all, and nothing but the baseline `sub`/`user_id`/`email`/`roles` (empty)/`token_type` claims
+`JwtService` always adds. **This is an easy trap**: if your app's own `ICurrentUserService` or
+frontend reads `name`/`mfa_enabled`/a role claim expecting it to be populated, and you call
+neither `With*Claims()` method, those fields are silently empty on every token, with no error at
+login — the symptom shows up downstream (a crash on `user.name`, or a branch-scoping check that
+treats "no role claim" as unrestricted access) rather than at the point the gap was introduced.
+If you only need permissions back-channel, use `GET api/auth/profile/me` (below) instead of
+either method — it requires no enricher at all.
+
+### `GET api/auth/profile/me`
+
+Returns the caller's profile from the database regardless of what the access token carries —
+use this if you'd rather not put profile data in the JWT at all, or as a fallback for clients
+that predate adding `.WithProfileClaims()`/`.WithPermissionClaims()`. Requires only
+`[Authorize]`, same as `GET api/auth/permissions/me`. See `docs/api-reference.md` for the
+response shape.
+
 ---
 
 ## SentinelOptions

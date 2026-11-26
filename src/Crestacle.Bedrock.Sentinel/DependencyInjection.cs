@@ -73,6 +73,30 @@ public static class DependencyInjection
     }
 
     /// <summary>
+    /// Registers a <see cref="SentinelProfileClaimsEnricher"/> that embeds the user's name,
+    /// MFA status, and role names into every issued JWT -- without the per-permission claims
+    /// <see cref="WithPermissionClaims"/> adds.
+    /// </summary>
+    /// <remarks>
+    /// Use this when your app needs the caller's name/MFA/role on every token but does not want
+    /// one claim per granted permission inflating token size (large permission sets can push a
+    /// JWT past a reverse proxy's default header-buffer size). Permissions stay available via
+    /// <c>GET api/auth/permissions/me</c> regardless -- <c>[MustHavePermission]</c> never depends
+    /// on token claims. Mutually exclusive with <see cref="WithPermissionClaims"/>: whichever is
+    /// called last wins, since both replace the single registered <see cref="IBedrockClaimsEnricher"/>.
+    /// </remarks>
+    /// <param name="builder">The <see cref="IBedrockBuilder"/> after <c>AddSentinel()</c>.</param>
+    /// <returns>The same builder for further chaining.</returns>
+    public static IBedrockBuilder WithProfileClaims(this IBedrockBuilder builder)
+    {
+        // Replace the default NullBedrockClaimsEnricher registered by AddBedrockAspNetCore().
+        builder.Services.RemoveAll<IBedrockClaimsEnricher>();
+        builder.Services.AddScoped<IBedrockClaimsEnricher, SentinelProfileClaimsEnricher>();
+
+        return builder;
+    }
+
+    /// <summary>
     /// Convenience method that registers the full Bedrock + Sentinel stack in one call.
     /// Equivalent to calling:
     /// <code>

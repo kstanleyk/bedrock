@@ -815,8 +815,8 @@ unlike every endpoint above, they do **not** honour the configurable Bedrock bas
 
 Every endpoint requires `[MustHavePermission(feature, action)]` (built-in features:
 `SentinelFeature.User`, `.Role`, `.Audit`; actions: `AppAction.Create/Read/Update/Delete`) except
-`GET api/auth/permissions/me`, which only requires an authenticated user (`[Authorize]`) since it
-returns the caller's own permissions.
+`GET api/auth/permissions/me` and `GET api/auth/profile/me`, which only require an authenticated
+user (`[Authorize]`) since they return data about the caller themselves.
 
 ### List users
 
@@ -910,6 +910,32 @@ GET api/auth/permissions/me
 
 Requires only an authenticated caller (no specific permission). Returns the full permission-ID set
 held by the current user, resolved the same way `PermissionAuthorizationHandler` resolves it.
+
+### Get my profile
+
+```
+GET api/auth/profile/me
+```
+
+Requires only an authenticated caller (no specific permission). Returns the caller's own profile,
+resolved from the database rather than from JWT claims — works regardless of whether the issuing
+app registered `.WithProfileClaims()`, `.WithPermissionClaims()`, or neither. See
+`docs/integrations/sentinel.md` → "Embedding only profile claims (no permissions)" for when to use
+this instead of (or alongside) claims-based profile data.
+
+**Response**
+```json
+{
+  "email": "jane.doe@example.com",
+  "fullName": "Jane Doe",
+  "roles": ["HRManager"]
+}
+```
+
+`404 Not Found` if the caller's subject has no corresponding Sentinel user record. Deliberately
+omits Sentinel's internal `User.Id` — it is a separate Guid from the auth subject
+(`sub`/`user_id`) the caller already has on its own access token; see
+`SentinelProfileClaimsEnricher`'s remarks for why the two must never be confused.
 
 ### List pending (dual-approval) assignments
 

@@ -29,6 +29,7 @@ public sealed class SecurityBoundaryTests
     [InlineData("GET",  "/api/auth/audit")]
     [InlineData("GET",  "/api/auth/pending-assignments")]
     [InlineData("GET",  "/api/auth/permissions/me")]
+    [InlineData("GET",  "/api/auth/profile/me")]
     public async Task Unauthenticated_ProtectedEndpoint_Returns401(string method, string path)
     {
         using var host   = SentinelTestHost.Create();
